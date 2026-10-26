@@ -57,7 +57,7 @@ def _hatched(key):
             bgcolor="rgba(0,0,0,0)",       # Hintergrund komplett durchsichtig
             fillmode="replace",
             size=5,
-            solidity=0.7,
+            solidity=0.6,
         ),
     )
 
