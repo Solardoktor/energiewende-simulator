@@ -40,3 +40,13 @@ Erstbefüllung: Action im Reiter *Actions* manuell starten (`Run workflow`) oder
 - Main file path: `SDR_TOOL_Energiewende-Simulator.py`
 - Advanced settings → Python 3.12
 - Abhängigkeiten sind in `requirements.txt` exakt gepinnt; Updates bewusst lokal testen.
+
+## Fehlersuche bei Datenabrufen
+
+Die App protokolliert jeden Abruf mit Dauer und HTTP-Status im Konsolenfenster
+(bzw. unter „Manage app → Logs“ auf Streamlit Cloud). Unabhängig von der App:
+
+```bash
+python scripts/diagnose_api.py          # schnelle Tests
+python scripts/diagnose_api.py --full   # zusätzlich ein ganzes Jahr total_power
+```

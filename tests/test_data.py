@@ -120,3 +120,19 @@ def test_unvollstaendiges_laufendes_jahr(tmp_path, monkeypatch):
     monkeypatch.setattr(data, "fetch_json", _fake_api(calls, year_data_until=date(2026, 9, 28)))
     r = data.load_power_period(date(2025, 10, 1), date(2026, 9, 30), date(2026, 10, 2), Store([tmp_path], tmp_path))
     assert (r.df["coverage"] < 1).sum() == 2 and any("unvollständig" in n for n in r.notes)
+
+
+def test_rate_limit_bricht_sofort_ab(monkeypatch):
+    import time
+    import requests
+
+    def fake_get(self, url, params=None, timeout=None):
+        r = requests.Response()
+        r.status_code, r._content, r.headers["Retry-After"] = 429, b"{}", "60"
+        return r
+
+    monkeypatch.setattr(requests.Session, "get", fake_get)
+    t0 = time.perf_counter()
+    with pytest.raises(data.RateLimited):
+        data.fetch_json("https://example.invalid/x", {})
+    assert time.perf_counter() - t0 < 2

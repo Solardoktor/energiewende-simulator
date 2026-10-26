@@ -1,6 +1,7 @@
 """Smoke-Test der Streamlit-App mit synthetischen Daten (ohne Netzzugriff)."""
 from pathlib import Path
 
+import pandas as pd
 import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
@@ -43,3 +44,19 @@ def test_app_laeuft_und_schalter_wirken():
     assert not at.exception
     at.sidebar.selectbox[0].set_value(2016).run()  # Jahr (vor dem Standort)
     assert not at.exception
+
+
+def test_fehlschlag_wird_nicht_gecacht(monkeypatch):
+    state = {"ok": False}
+
+    def power(start, end, today, store=None):
+        if not state["ok"]:
+            return data.LoadResult(pd.DataFrame(), ["Rate-Limit"], [])
+        return data.LoadResult(synthetic_raw(start, end), [], ["synthetisch"])
+
+    monkeypatch.setattr(data, "load_power_period", power)
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert any("Keine Energiedaten" in e.value for e in at.error)
+    state["ok"] = True
+    at.run()
+    assert not at.error and len(at.get("plotly_chart")) == 1

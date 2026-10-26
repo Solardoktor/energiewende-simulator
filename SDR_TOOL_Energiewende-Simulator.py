@@ -7,6 +7,7 @@ Start:  streamlit run SDR_TOOL_Energiewende-Simulator.py
 """
 
 import base64
+import time
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -27,27 +28,51 @@ APP_DIR = Path(__file__).resolve().parent
 # Gecachte Lade- und Rechenfunktionen
 # (``today`` ist Teil des Cache-Schlüssels → spätestens täglich neu bewertet)
 # ---------------------------------------------------------------------------
+class DataUnavailable(Exception):
+    """Wird in gecachten Ladefunktionen geworfen, damit Fehlschläge NICHT gecacht werden."""
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_power(start: date, end: date, today: date):
     r = data.load_power_period(start, end, today)
+    if r.df.empty or r.df["coverage"].sum() == 0:
+        raise DataUnavailable(r.notes)
     return r.df, r.notes, r.sources
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_installed(today: date):
     r = data.load_installed(today)
+    if r.df.empty:
+        raise DataUnavailable(r.notes)
     return r.df, r.notes, r.sources
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def load_temps(location: str, start: date, end: date, today: date):
     r = data.load_temperatures(location, start, end, today)
+    if r.df.empty:
+        raise DataUnavailable(r.notes)
     return r.df, r.notes, r.sources
 
 
 @st.cache_data(show_spinner=False)
 def load_hgt_reference(location: str):
-    return data.load_hgt_reference(location)
+    ref, notes = data.load_hgt_reference(location)
+    if ref is None:
+        raise DataUnavailable(notes)
+    return ref
+
+
+def timed(label, fn, *args):
+    """Ruft fn auf, misst die Dauer und fängt DataUnavailable ab (→ None, Hinweise)."""
+    t0 = time.perf_counter()
+    try:
+        out, notes = fn(*args), []
+    except DataUnavailable as e:
+        out, notes = None, list(e.args[0]) if e.args else []
+    timings.append(f"{label}: {time.perf_counter() - t0:.1f} s")
+    return out, notes
 
 
 @st.cache_data(show_spinner=False, max_entries=64)
@@ -106,19 +131,27 @@ location = sb.selectbox("Standort Temperaturdaten", list(config.LOCATIONS),
 # ---------------------------------------------------------------------------
 # Daten laden
 # ---------------------------------------------------------------------------
-with st.spinner("Lade Daten …"):
-    raw, notes_p, src_p = load_power(start_date, end_date, today)
-    installed, notes_i, src_i = load_installed(today)
-    temps, notes_t, src_t = load_temps(location, start_date, end_date, today)
-    hgt_ref, notes_h = load_hgt_reference(location)
-notes = notes_p + notes_i + notes_t + notes_h
-sources = src_p + src_i + src_t
+timings: list[str] = []
+with st.status("Lade Daten …", expanded=False) as status:
+    status.update(label="Lade Erzeugung und Last (Energy-Charts) …")
+    res, notes_p = timed("Erzeugung/Last", load_power, start_date, end_date, today)
+    status.update(label="Lade installierte Leistung (Energy-Charts) …")
+    res_i, notes_i = timed("Installierte Leistung", load_installed, today)
+    status.update(label=f"Lade Temperaturen {location} (Open-Meteo) …")
+    res_t, notes_t = timed("Temperaturen", load_temps, location, start_date, end_date, today)
+    status.update(label="Daten geladen", state="complete")
 
-if raw.empty or raw["coverage"].sum() == 0:
-    for n in notes:
+if res is None:
+    for n in notes_p:
         st.warning(n)
-    st.error("Keine Energiedaten erhalten. Bitte später erneut versuchen.")
+    st.error("Keine Energiedaten erhalten. Bitte in etwa einer Minute neu laden (Energy-Charts begrenzt "
+             "die Zahl der Abrufe). Details zum Abruf stehen im Konsolenfenster bzw. im Cloud-Log.")
     st.stop()
+raw, notes_p, src_p = res
+installed, notes_i2, src_i = res_i if res_i else (pd.DataFrame(), [], [])
+temps, notes_t2, src_t = res_t if res_t else (pd.DataFrame(columns=["date", "temp_mean"]), [], [])
+notes = notes_p + notes_i + notes_i2 + notes_t + notes_t2
+sources = src_p + src_i + src_t
 
 inst_daily, inst_fallback = data.daily_installed(installed, raw["date"])
 if inst_fallback:
@@ -195,6 +228,11 @@ co2_specific = sb.number_input("Spezifische CO₂-Intensität Residual (g/kWh)",
 # ---------------------------------------------------------------------------
 # Berechnung
 # ---------------------------------------------------------------------------
+hgt_ref = None
+if add_heat > 0:      # Referenz-Heizgradtage (30 Jahre Temperaturdaten) nur bei Bedarf laden
+    with st.spinner("Lade Referenz-Heizgradtage (einmalig) …"):
+        hgt_ref, notes_h = timed("Referenz-Heizgradtage", load_hgt_reference, location)
+    notes += notes_h
 params = model.Params(
     scaling_enabled=not disable_monthly_scaling,
     target_solar=float(t_solar), target_wind_onshore=float(t_on), target_wind_offshore=float(t_off),
@@ -290,6 +328,7 @@ with st.expander("Debug: Datenbasis und tägliche Differenz EE – Verbrauch", e
     st.markdown(texts.DEBUG_COLUMNS)
     st.markdown("**Datenquellen und Abrufzeitpunkte**")
     st.markdown("\n".join(f"- {x}" for x in sources) or "–")
+    st.markdown("**Ladezeiten dieses Aufrufs:** " + " | ".join(timings))
     series = [c for c in raw.columns if c not in ("date", "coverage")]
     st.markdown("**Energy-Charts-Serien im Datensatz:** " + ", ".join(f"`{c}`" for c in series))
     used = {config.LOAD_SERIES, *model.GEN_SERIES.values(), *config.OTHER_EE_SERIES, *config.PUMPED_STORAGE_SERIES}

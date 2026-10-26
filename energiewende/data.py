@@ -7,7 +7,9 @@ als Liste von Texten zurückgegeben.
 
 from __future__ import annotations
 
+import logging
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
@@ -27,21 +29,49 @@ _OFFSET_RE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$")
 # ---------------------------------------------------------------------------
 # HTTP
 # ---------------------------------------------------------------------------
+log = logging.getLogger("energiewende")
+if not log.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [energiewende] %(message)s", "%H:%M:%S"))
+    log.addHandler(_h)
+    log.setLevel(logging.INFO)
+
+# Fail fast: höchstens ein kurzer Wiederholversuch bei Serverfehlern, kein Warten bei
+# Rate-Limit (429) – sonst „hängt“ die Seite minutenlang. Lange Lesezeit nur für
+# große Jahresabrufe.
+TIMEOUT_DEFAULT = (10, 30)
+TIMEOUT_LARGE = (10, 120)
+
+
+class RateLimited(RuntimeError):
+    pass
+
+
 def _session() -> requests.Session:
     s = requests.Session()
-    retry = Retry(total=3, backoff_factor=2, status_forcelist=(429, 500, 502, 503, 504),
-                  allowed_methods=("GET",), respect_retry_after_header=True)
+    retry = Retry(total=1, backoff_factor=1, status_forcelist=(500, 502, 503, 504),
+                  allowed_methods=("GET",), respect_retry_after_header=False, raise_on_status=False)
     s.mount("https://", HTTPAdapter(max_retries=retry))
     s.headers["User-Agent"] = config.HTTP_USER_AGENT
     return s
 
 
-def fetch_json(url: str, params: dict, timeout: tuple = (10, 180)) -> dict:
-    """GET mit Retries. Wirft bei Fehlern eine Exception (wird bewusst nicht gecacht)."""
-    with _session() as s:
-        r = s.get(url, params=params, timeout=timeout)
-        r.raise_for_status()
-        return r.json()
+def fetch_json(url: str, params: dict, timeout: tuple = TIMEOUT_DEFAULT) -> dict:
+    """GET mit Protokoll (Dauer, Status, Größe). Wirft bei Fehlern eine Exception."""
+    t0 = time.perf_counter()
+    log.info("GET %s %s …", url, params)
+    try:
+        with _session() as s:
+            r = s.get(url, params=params, timeout=timeout)
+    except requests.Timeout as e:
+        log.warning("TIMEOUT nach %.1f s: %s", time.perf_counter() - t0, url)
+        raise TimeoutError(f"keine Antwort innerhalb von {timeout[1]} s") from e
+    dt = time.perf_counter() - t0
+    log.info("→ HTTP %s in %.1f s, %.1f MB", r.status_code, dt, len(r.content) / 1e6)
+    if r.status_code == 429:
+        raise RateLimited(f"Rate-Limit erreicht (HTTP 429, Retry-After {r.headers.get('Retry-After', '?')} s)")
+    r.raise_for_status()
+    return r.json()
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +228,11 @@ def fetch_power_year(year: int, needed_until: date) -> pd.DataFrame:
     params = {"country": "de",
               "start": (date(year, 1, 1) - timedelta(days=1)).isoformat(),
               "end": (needed_until + timedelta(days=1)).isoformat()}
-    daily = power_to_daily_energy(fetch_json(f"{config.ENERGY_CHARTS_URL}/total_power", params))
+    js = fetch_json(f"{config.ENERGY_CHARTS_URL}/total_power", params, TIMEOUT_LARGE)
+    t0 = time.perf_counter()
+    daily = power_to_daily_energy(js)
+    log.info("total_power %s: %d Datensätze → %d Tage (inkl. Puffertage), %d Serien, Aufbereitung %.1f s", year,
+             len(_records(js)), len(daily), max(0, daily.shape[1] - 2), time.perf_counter() - t0)
     if daily.empty:
         return daily
     mask = (daily["date"] >= pd.Timestamp(year, 1, 1)) & (daily["date"] <= pd.Timestamp(needed_until))
@@ -286,7 +320,7 @@ def _slug(name: str) -> str:
 def _fetch_temps(lat: float, lon: float, start: date, end: date) -> pd.DataFrame:
     js = fetch_json(config.OPEN_METEO_ARCHIVE_URL, {
         "latitude": lat, "longitude": lon, "start_date": start.isoformat(), "end_date": end.isoformat(),
-        "daily": "temperature_2m_mean", "timezone": config.TIMEZONE}, timeout=(10, 90))
+        "daily": "temperature_2m_mean", "timezone": config.TIMEZONE}, timeout=TIMEOUT_LARGE)
     return parse_temperatures(js)
 
 
