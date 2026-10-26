@@ -56,12 +56,10 @@ def load_temps(location: str, start: date, end: date, today: date):
     return r.df, r.notes, r.sources
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_hgt_reference(location: str):
-    ref, notes = data.load_hgt_reference(location)
-    if ref is None:
-        raise DataUnavailable(notes)
-    return ref
+    """Nur Lesen vorberechneter Werte – kein Netzzugriff (kann nicht hängen)."""
+    return data.load_hgt_reference(location)
 
 
 def timed(label, fn, *args):
@@ -229,9 +227,8 @@ co2_specific = sb.number_input("Spezifische CO₂-Intensität Residual (g/kWh)",
 # Berechnung
 # ---------------------------------------------------------------------------
 hgt_ref = None
-if add_heat > 0:      # Referenz-Heizgradtage (30 Jahre Temperaturdaten) nur bei Bedarf laden
-    with st.spinner("Lade Referenz-Heizgradtage (einmalig) …"):
-        hgt_ref, notes_h = timed("Referenz-Heizgradtage", load_hgt_reference, location)
+if add_heat > 0:      # vorberechnete Referenz-Heizgradtage (data/hgt_reference.json)
+    hgt_ref, notes_h = load_hgt_reference(location)
     notes += notes_h
 params = model.Params(
     scaling_enabled=not disable_monthly_scaling,

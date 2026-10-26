@@ -136,3 +136,26 @@ def test_rate_limit_bricht_sofort_ab(monkeypatch):
     with pytest.raises(data.RateLimited):
         data.fetch_json("https://example.invalid/x", {})
     assert time.perf_counter() - t0 < 2
+
+
+def test_referenz_heizgradtage_ohne_netz_in_der_app(tmp_path, monkeypatch):
+    def no_network(*a, **k):
+        raise AssertionError("App darf keine 30 Jahre Temperaturdaten abrufen")
+
+    monkeypatch.setattr(data, "fetch_json", no_network)
+    store = Store([tmp_path], tmp_path)
+    ref, notes = data.load_hgt_reference("München", store)
+    assert ref is None and "normiert" in notes[0]
+
+
+def test_referenz_heizgradtage_vorberechnen(tmp_path, monkeypatch):
+    def om(url, params, timeout=None):
+        d = pd.date_range(params["start_date"], params["end_date"])
+        return {"daily": {"time": d.strftime("%Y-%m-%d").tolist(), "temperature_2m_mean": [5.0] * len(d)}}
+
+    monkeypatch.setattr(data, "fetch_json", om)
+    store = Store([tmp_path], tmp_path)
+    ref, _ = data.load_hgt_reference("München", store, allow_fetch=True)
+    assert ref == pytest.approx(10 * 365.25, rel=1e-3)
+    monkeypatch.setattr(data, "fetch_json", lambda *a, **k: (_ for _ in ()).throw(AssertionError))
+    assert data.load_hgt_reference("München", store)[0] == pytest.approx(ref, rel=1e-3)

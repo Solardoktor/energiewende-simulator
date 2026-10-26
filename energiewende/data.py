@@ -7,6 +7,7 @@ als Liste von Texten zurückgegeben.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -353,27 +354,62 @@ def load_temperatures(location: str, start: date, end: date, today: date,
     return res
 
 
-def load_hgt_reference(location: str, store: Store | None = None) -> tuple[float | None, list[str]]:
-    """Mittlere jährliche Heizgradtage (Basis 15 °C) der Klimanormalperiode am Standort."""
+HGT_REFERENCE_FILE = "hgt_reference.json"
+
+
+def read_hgt_references(store: Store | None = None) -> dict:
+    """Vorberechnete Referenz-Heizgradtage aus data/ bzw. cache/ (spätere Ablage ergänzt/überschreibt)."""
+    store = store or Store()
+    refs: dict = {}
+    for d in store.read_dirs:
+        f = d / HGT_REFERENCE_FILE
+        if f.exists():
+            try:
+                refs.update(json.loads(f.read_text(encoding="utf-8")))
+            except Exception:  # noqa: BLE001
+                continue
+    return refs
+
+
+def load_hgt_reference(location: str, store: Store | None = None,
+                       allow_fetch: bool = False) -> tuple[float | None, list[str]]:
+    """Mittlere jährliche Heizgradtage (Basis 15 °C) der Klimanormalperiode am Standort.
+
+    Die App liest nur vorberechnete Werte (``data/hgt_reference.json``, erzeugt von
+    ``scripts/update_data.py``). Der Abruf von 30 Jahren Tageswerten ist für einen
+    Seitenaufruf zu langsam und läuft bei Open-Meteo schnell ins Rate-Limit; er wird
+    nur mit ``allow_fetch=True`` (Aktualisierungsskript) ausgeführt.
+    """
     store = store or Store()
     y0, y1 = config.HGT_REFERENCE_YEARS
-    key = f"hgtref_{_slug(location)}_{y0}_{y1}"
-    entry = store.load(key)
-    if entry is None:
-        try:
-            lat, lon = config.LOCATIONS[location]
-            t = _fetch_temps(lat, lon, date(y0, 1, 1), date(y1, 12, 31))
-            if t.empty:
-                raise ValueError("leere Antwort")
-            entry = store.save(key, t, date(y1, 12, 31))
-        except Exception as e:  # noqa: BLE001
-            return None, [f"Referenz-Heizgradtage {location}: Abruf fehlgeschlagen ({e}); "
-                          "Heizlast wird auf den gewählten Zeitraum normiert."]
-    t = entry.df.dropna(subset=["temp_mean"])
-    if t.empty:
-        return None, []
+    key = f"{location}|{y0}-{y1}"
+    refs = read_hgt_references(store)
+    if key in refs:
+        return float(refs[key]["hgt"]), []
+    if not allow_fetch:
+        return None, [f"Referenz-Heizgradtage für {location} liegen noch nicht vor – "
+                      "die Heizlast wird auf den gewählten Zeitraum normiert (ein Jahr = Jahreswert)."]
+    try:
+        lat, lon = config.LOCATIONS[location]
+        t = _fetch_temps(lat, lon, date(y0, 1, 1), date(y1, 12, 31)).dropna(subset=["temp_mean"])
+        if t.empty:
+            raise ValueError("leere Antwort")
+    except Exception as e:  # noqa: BLE001
+        return None, [f"Referenz-Heizgradtage {location}: Abruf fehlgeschlagen ({e})."]
     years = pd.to_datetime(t["date"]).dt.year.nunique()
-    return float(np.maximum(0, config.HGT_BASE_TEMP - t["temp_mean"]).sum() / years), []
+    hgt = float(np.maximum(0, config.HGT_BASE_TEMP - t["temp_mean"]).sum() / years)
+    mine = {}
+    f = store.write_dir / HGT_REFERENCE_FILE
+    if f.exists():
+        try:
+            mine = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            mine = {}
+    mine[key] = {"hgt": round(hgt, 1), "years": [y0, y1], "days": int(len(t)),
+                 "computed_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}
+    store.write_dir.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(mine, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
+    return hgt, []
 
 
 def utc_now() -> datetime:

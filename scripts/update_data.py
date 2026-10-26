@@ -4,6 +4,7 @@ Regeln (siehe energiewende/config.py):
   * Jahre vor dem letzten vollständigen Kalenderjahr: jährlich neu abrufen
   * letztes vollständiges Jahr und laufendes Jahr (bis Ende Vormonat): monatlich
   * installierte Leistung: bei jedem Lauf; Temperaturen des Default-Standorts bei Bedarf
+  * Referenz-Heizgradtage aller Standorte: einmalig (fehlende ergänzen)
 
 Aufruf:  python scripts/update_data.py            (nur fällige Datensätze)
          python scripts/update_data.py --force    (alles neu)
@@ -23,6 +24,7 @@ from energiewende.store import (Store, last_day_of_previous_month, max_age_days,
                                 needs_refresh, year_needed_until)
 
 PAUSE_S = 35   # Energy-Charts: 2 Anfragen/min je Endpoint
+PAUSE_OPEN_METEO_S = 65   # 30 Jahre Tageswerte zählen bei Open-Meteo als viele Einzelabrufe
 
 
 def main() -> int:
@@ -54,8 +56,16 @@ def main() -> int:
     loc = config.DEFAULT_LOCATION
     r = data.load_temperatures(loc, date(args.from_year, 1, 1), period_end, today, store)
     print(f"Temperaturen {loc}:", "; ".join(r.notes) or "ok")
-    ref, notes = data.load_hgt_reference(loc, store)
-    print(f"Referenz-Heizgradtage {loc}: {ref:.0f}" if ref else f"Referenz-HGT: {notes}")
+    # Referenz-Heizgradtage aller Standorte (30 Jahre je Standort; ändern sich nicht → nur fehlende)
+    existing = data.read_hgt_references(store)
+    y0, y1 = config.HGT_REFERENCE_YEARS
+    for loc in config.LOCATIONS:
+        if f"{loc}|{y0}-{y1}" in existing and not args.force:
+            continue
+        ref, notes = data.load_hgt_reference(loc, store, allow_fetch=True)
+        print(f"Referenz-Heizgradtage {loc}: {ref:.0f}" if ref else f"Referenz-HGT {loc}: {notes}")
+        errors += bool(notes)
+        time.sleep(PAUSE_OPEN_METEO_S)
     return 1 if errors else 0
 
 
