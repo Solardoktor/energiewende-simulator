@@ -1,0 +1,8 @@
+# Exakt gepinnt und getestet mit Python 3.12 (Streamlit Cloud: Advanced settings → Python 3.12)
+streamlit==1.65.0
+pandas==3.0.6
+numpy==2.5.3
+plotly==7.1.0
+requests==2.34.2
+holidays==0.106
+pyarrow==25.0.1
