@@ -1,0 +1,1 @@
+"""Energiewende-Simulator (Solar Doktor)."""
