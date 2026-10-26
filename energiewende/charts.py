@@ -21,13 +21,18 @@ COLORS = {
     "dhw": "#C2185B",
     "heating": "#d32f2f",
 }
-GEN_STYLE = {   # (Füllfarbe halbtransparent, Musterfarbe)
+""" AHO: GEN_STYLE = {   # (Füllfarbe halbtransparent, Musterfarbe)
     "solar": ("rgba(255,204,0,0.35)", "#FFCC00"),
     "wind_onshore": ("rgba(124,179,66,0.35)", "#7CB342"),
     "wind_offshore": ("rgba(56,142,60,0.35)", "#388E3C"),
     "other_ee": ("rgba(25,118,210,0.35)", "#1976D2"),
+} """ 
+GEN_STYLE = {   # (Füllfarbe halbtransparent, Musterfarbe)
+    "solar": ("#FFCC00", "#FFCC00"),
+    "wind_onshore": ("#7CB342", "#7CB342"),
+    "wind_offshore": ("#388E3C", "#388E3C"),
+    "other_ee": ("#1976D2", "#1976D2"),
 }
-
 
 def _seg(fig, x, y, base, name, hover_label, opacity=1.0, color=None, marker=None):
     fig.add_trace(go.Bar(
@@ -37,10 +42,24 @@ def _seg(fig, x, y, base, name, hover_label, opacity=1.0, color=None, marker=Non
     ))
 
 
-def _hatched(key):
+""" AHO: def _hatched(key):
     fill, fg = GEN_STYLE[key]
     return dict(color=fill, pattern_shape="/", pattern_fgcolor=fg, pattern_size=5, pattern_solidity=0.4)
-
+"""
+def _hatched(key):
+    base, fg = GEN_STYLE[key]
+    return dict(
+        color=base,
+        pattern=dict(
+            shape="/",
+            fgcolor=fg,
+            fgopacity=1.0,                 # Linien voll deckend
+            bgcolor="rgba(0,0,0,0)",       # Hintergrund komplett durchsichtig
+            fillmode="replace",
+            size=5,
+            solidity=0.4,
+        ),
+    )
 
 def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle: str) -> go.Figure:
     x = df["date"]
