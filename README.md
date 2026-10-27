@@ -1,4 +1,4 @@
-# Energiewende-Simulator (Solar Doktor)
+# Energiewende-Simulator (Solardoktor)
 
 Streamlit-App für eine skalierte Tagesenergie-Übersicht Deutschlands auf Basis von
 Energy-Charts.info (Fraunhofer ISE) und Open-Meteo.
