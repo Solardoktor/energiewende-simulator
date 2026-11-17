@@ -264,6 +264,15 @@ def summarize(df: pd.DataFrame, p: Params, cyclic: bool = True) -> dict:
     }
 
 
+def duration_curve(df: pd.DataFrame) -> np.ndarray:
+    """Geordnete Jahresdauerlinie von Last − EE als mittlere Tagesleistung in GW.
+
+    Positiv = Residuallast (EE-Defizit), negativ = Superpower (EE-Überschuss);
+    absteigend sortiert.
+    """
+    return np.sort((-df["ee_minus_load"].to_numpy(dtype=float)) / 24.0)[::-1]
+
+
 def german_number(n, decimals: int = 1) -> str:
     if n is None or (isinstance(n, float) and np.isnan(n)):
         return "–"

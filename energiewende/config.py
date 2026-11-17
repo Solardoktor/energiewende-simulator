@@ -102,6 +102,14 @@ CURRENT_LKW = 0.0
 CURRENT_DHW = 15      # Mio. EW
 CURRENT_HEATING = 5   # Mio. EW
 
+# Szenarien Sektorenkopplung (Gesamtwerte; Zusatzlast = Differenz zum Bestand)
+SECTOR_STATUS_QUO = "Status Quo (aktueller Bestand)"
+SECTOR_SCENARIOS = {
+    SECTOR_STATUS_QUO: {"ev": CURRENT_EV, "lkw": CURRENT_LKW, "dhw": CURRENT_DHW, "heating": CURRENT_HEATING},
+    "Szenario 2030": {"ev": 10, "lkw": 1.0, "dhw": 25, "heating": 20},
+    "Szenario 2045": {"ev": 30, "lkw": 3.0, "dhw": 60, "heating": 40},
+}
+
 # Mobilität, Fahrleistung je Monat (relativ, Ø ≈ 1): stilisiert, im Sommer höher
 # (Urlaubs-/Freizeitverkehr). Größenordnung ±5–6 % orientiert an monatlichen
 # Inlandsablieferungen von Ottokraftstoff (BAFA/UFOP); Ablieferungen sind nur ein

@@ -108,3 +108,35 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
             font=dict(size=11, color="#333333"), xanchor="center")],
     )
     return fig
+
+
+def build_duration_curve(current: dict, previous: dict | None = None) -> go.Figure:
+    """Geordnete Jahresdauerlinie (Last − EE, Ø Tagesleistung in GW).
+
+    ``current``/``previous``: {"curve": np.ndarray absteigend, "label": str}
+    """
+    fig = go.Figure()
+    if previous is not None:
+        prev = previous["curve"]
+        fig.add_trace(go.Scatter(
+            x=list(range(1, len(prev) + 1)), y=prev, mode="lines", name="Vorher: " + previous["label"],
+            line=dict(color="#888888", width=2, dash="dash"),
+            hovertemplate="Vorher, Tag %{x}: %{y:.1f} GW<extra></extra>",
+        ))
+    cur = current["curve"]
+    fig.add_trace(go.Scatter(
+        x=list(range(1, len(cur) + 1)), y=cur, mode="lines", name="Aktuell: " + current["label"],
+        line=dict(color="#1f3b73", width=2.5), fill="tozeroy", fillcolor="rgba(31,59,115,0.12)",
+        hovertemplate="Aktuell, Tag %{x}: %{y:.1f} GW<extra></extra>",
+    ))
+    fig.add_hline(y=0, line=dict(color="#333333", width=1))
+    fig.update_layout(
+        xaxis=dict(title="Tage (absteigend sortiert)", showgrid=True, gridcolor="rgba(200,200,200,0.25)",
+                   range=[1, max(len(cur), len(previous["curve"]) if previous else 0)]),
+        yaxis=dict(title="Residuallast (+) / Superpower (−) [GW, Ø Tagesleistung]", showgrid=True,
+                   gridcolor="rgba(200,200,200,0.25)", zeroline=False),
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="left", x=0, font=dict(size=11)),
+        height=560, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white",
+        margin=dict(l=60, r=30, t=30, b=150),
+    )
+    return fig

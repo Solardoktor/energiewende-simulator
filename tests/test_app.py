@@ -30,7 +30,7 @@ def offline(monkeypatch):
 def test_app_laeuft_und_schalter_wirken():
     at = AppTest.from_file(APP, default_timeout=60).run()
     assert not at.exception, at.exception
-    assert len(at.get("plotly_chart")) == 1
+    assert len(at.get("plotly_chart")) == 2
     first = at.dataframe[0].value.copy()
 
     at.sidebar.checkbox[1].check().run()          # Monatliche Skalierung aus
@@ -59,7 +59,7 @@ def test_fehlschlag_wird_nicht_gecacht(monkeypatch):
     assert any("Keine Energiedaten" in e.value for e in at.error)
     state["ok"] = True
     at.run()
-    assert not at.error and len(at.get("plotly_chart")) == 1
+    assert not at.error and len(at.get("plotly_chart")) == 2
 
 
 def test_heizung_eingabe_ohne_netzabruf(monkeypatch, tmp_path):
@@ -73,8 +73,43 @@ def test_heizung_eingabe_ohne_netzabruf(monkeypatch, tmp_path):
                         lambda l, s, e, t, store=None: data.LoadResult(synthetic_temps(s, e)))
     monkeypatch.setattr(data, "fetch_json", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Netz")))
     at = AppTest.from_file(APP, default_timeout=60).run()
+    next(c for c in at.sidebar.checkbox if "Sektorenkopplung" in c.label).check().run()
     for label in ("Warmwasser", "Heizung"):
         ni = next(n for n in at.sidebar.number_input if label in n.label)
         ni.set_value(80).run()
         assert not at.exception, at.exception
-    assert len(at.get("plotly_chart")) == 1
+    assert len(at.get("plotly_chart")) == 2
+
+
+def _dl_traces(at):
+    import json
+    fig = json.loads(at.get("plotly_chart")[1].proto.spec)
+    return [t["name"] for t in fig["data"]]
+
+
+def test_sektorszenarien_und_dauerlinien_vergleich():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.exception, at.exception
+    names = _dl_traces(at)
+    assert len(names) == 1 and names[0].startswith("Aktuell:") and "PKW 2" in names[0]
+
+    sector = next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung")
+    sector.set_value("Szenario 2030").run()
+    assert not at.exception, at.exception
+    names = _dl_traces(at)
+    assert len(names) == 2
+    assert names[0].startswith("Vorher:") and "PKW 2" in names[0]
+    assert names[1].startswith("Aktuell:") and "PKW 10" in names[1] and "Heiz. 20" in names[1]
+    cap = [c.value for c in at.sidebar.caption if c.value.startswith("E-PKW")][0]
+    assert "10 Mio" in cap and "25 Mio EW" in cap
+
+    # Rerun ohne Parameteränderung (z. B. CO₂) ändert den Vergleich nicht
+    at.sidebar.number_input[-1].set_value(800).run()
+    assert _dl_traces(at) == names
+
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Szenario 2045").run()
+    names2 = _dl_traces(at)
+    assert "PKW 10" in names2[0] and "PKW 30" in names2[1] and "LKW 3,0" in names2[1]
+
+    at.button[0].click().run()          # Vergleich zurücksetzen
+    assert len(_dl_traces(at)) == 1

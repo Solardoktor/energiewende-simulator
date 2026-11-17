@@ -108,3 +108,12 @@ def test_fehlende_lastserie():
     raw = synthetic_raw().drop(columns=["load_incl_self_consumption"])
     with pytest.raises(KeyError):
         run(raw=raw)
+
+
+def test_dauerlinie_sortiert_und_konsistent():
+    df, S = run(model.Params(add_heating_mio=10))
+    dl = model.duration_curve(df)
+    assert len(dl) == len(df) and np.all(np.diff(dl) <= 0)
+    assert dl[dl > 0].sum() * 24 == pytest.approx(S["sums_gwh"]["residual_day"])
+    assert -dl[dl < 0].sum() * 24 == pytest.approx(S["sums_gwh"]["superpower_day"])
+    assert (dl > 0).sum() == S["deficit_days"]

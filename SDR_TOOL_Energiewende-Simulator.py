@@ -8,6 +8,7 @@ Start:  streamlit run SDR_TOOL_Energiewende-Simulator.py
 
 import base64
 import time
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -84,6 +85,24 @@ def fmt_period(p: model.Period | None) -> str:
         return "0 Tage"
     wrap = " ↻" if p.wraps else ""
     return f"{p.days} Tage ({p.start:%d.%m.%Y} bis {p.end:%d.%m.%Y}{wrap})"
+
+
+def describe_run(p: model.Params, start: date, end: date, location: str,
+                 ev, lkw, dhw, heat) -> str:
+    """Kurzbeschreibung der Parameter eines Berechnungslaufs (für die Legende)."""
+    gen = (f"Solar {p.target_solar:.0f} GWp, Wind {p.target_wind_onshore:.0f}+{p.target_wind_offshore:.0f} GW"
+           if p.scaling_enabled else "Ist-Leistung (unskaliert)")
+    extras = []
+    if p.include_pumped_storage:
+        extras.append("inkl. Pumpspeicher")
+    if p.load_scale != 1.0:
+        extras.append(f"Last {p.load_scale * 100:.0f} %")
+    if location != config.DEFAULT_LOCATION:
+        extras.append(f"Temp. {location}")
+    return (f"{start:%d.%m.%Y}–{end:%d.%m.%Y} | {gen}<br>"
+            f"PKW {gn(ev, 0)} | LKW {gn(lkw)} | WW {gn(dhw, 0)} | Heiz. {gn(heat, 0)} Mio | "
+            f"WP Luft/Sole {p.share_air_hp * 100:.0f}/{p.share_water_hp * 100:.0f} % | "
+            f"WE-Laden {p.weekend_share * 100:.0f} %" + (" | " + ", ".join(extras) if extras else ""))
 
 
 # ---------------------------------------------------------------------------
@@ -188,22 +207,27 @@ else:
 # Seitenleiste: Sektorenkopplung
 # ---------------------------------------------------------------------------
 sb.subheader("Sektorenkopplung – Zusatzlasten (über aktuellen Bestand hinaus)")
-sb.caption("Defaults entsprechen ungefähr dem aktuellen Bestand. Die Eingabe ist der Gesamtzielwert; "
-           "die Differenz zum Bestand wird als Zusatzlast modelliert.")
-
-sb.markdown("**Elektromobilität**")
-mio_ev = sb.number_input("Millionen Elektro-PKW (2 … 40, gesamt)", config.CURRENT_EV, 40, config.CURRENT_EV, 1)
-mio_lkw = sb.number_input("Millionen Elektro-LKW (0 … 4, gesamt)", config.CURRENT_LKW, 4.0, config.CURRENT_LKW,
-                          0.1, format="%.1f")
+sector_scenario = sb.radio("Szenario Sektorenkopplung", list(config.SECTOR_SCENARIOS), index=0)
+ssc = config.SECTOR_SCENARIOS[sector_scenario]
+use_manual_sector = sb.checkbox("Manuelle Werte Sektorenkopplung verwenden", value=False)
+sb.caption("Werte sind Gesamtzahlen; die Differenz zum aktuellen Bestand wird als Zusatzlast modelliert.")
+if use_manual_sector:
+    sb.markdown("**Elektromobilität**")
+    mio_ev = sb.number_input("Millionen Elektro-PKW (2 … 40, gesamt)", config.CURRENT_EV, 40, int(ssc["ev"]), 1)
+    mio_lkw = sb.number_input("Millionen Elektro-LKW (0 … 4, gesamt)", config.CURRENT_LKW, 4.0,
+                              float(ssc["lkw"]), 0.1, format="%.1f")
+    sb.markdown("**Wärme**")
+    mio_dhw = sb.number_input("Millionen Einwohner elektrische Warmwasserbereitung (15 … 80, gesamt)",
+                              config.CURRENT_DHW, 80, int(ssc["dhw"]), 1)
+    mio_heat = sb.number_input("Millionen Einwohner elektrische Heizung (5 … 80, gesamt)",
+                               config.CURRENT_HEATING, 80, int(ssc["heating"]), 1)
+else:
+    mio_ev, mio_lkw, mio_dhw, mio_heat = ssc["ev"], ssc["lkw"], ssc["dhw"], ssc["heating"]
+sb.caption(f"E-PKW: {gn(mio_ev, 0)} Mio | E-LKW: {gn(mio_lkw)} Mio | "
+           f"E-Warmwasser: {gn(mio_dhw, 0)} Mio EW | E-Heizung: {gn(mio_heat, 0)} Mio EW")
 weekend_share = sb.slider("Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)", 0, 50, 20,
                           help="Dieser Anteil wird auf Wochenenden und Feiertage gelegt, "
                                "der Rest folgt dem saisonalen Profil über alle Tage.") / 100.0
-
-sb.markdown("**Wärme**")
-mio_dhw = sb.number_input("Millionen Einwohner elektrische Warmwasserbereitung (15 … 80, gesamt)",
-                          config.CURRENT_DHW, 80, config.CURRENT_DHW, 1)
-mio_heat = sb.number_input("Millionen Einwohner elektrische Heizung (5 … 80, gesamt)",
-                           config.CURRENT_HEATING, 80, config.CURRENT_HEATING, 1)
 sb.markdown("**Heizung – Anteile (Summe ≤ 100 %)**")
 hp_air = sb.slider("Anteil Luft-Wasser-WP (%)", 0, 100, 60)
 hp_water = sb.slider("Anteil Wasser-Wasser-/Sole-WP (%)", 0, 100, 10)
@@ -265,6 +289,30 @@ subtitle = (f"{gen_txt}<br>Gesamt-Last aus Basis-Last, e-PKW ({mio_ev:.1f} Mio.)
 fig = charts.build_figure(df, start_date, end_date,
                           f"Tagesbilanz von Stromerzeugung und Verbrauch in Deutschland  {period_str}", subtitle)
 st.plotly_chart(fig, width="stretch")
+
+# ---------------------------------------------------------------------------
+# Geordnete Jahresdauerlinie mit Vergleich zum vorhergehenden Berechnungslauf
+# (Zwischenspeicher: st.session_state – je Browser-Sitzung, nicht zwischen Nutzern geteilt)
+# ---------------------------------------------------------------------------
+st.subheader("Geordnete Jahresdauerlinie: Last − EE")
+run_signature = (replace(params, co2_specific=0.0), start_date, end_date, location)   # CO₂ ändert die Kurve nicht
+run_label = describe_run(params, start_date, end_date, location, mio_ev, mio_lkw, mio_dhw, mio_heat)
+current_run = {"signature": run_signature, "label": run_label, "curve": model.duration_curve(df)}
+stored = st.session_state.get("dl_current")
+if stored is None or stored["signature"] != run_signature:
+    if stored is not None:
+        st.session_state["dl_previous"] = stored          # bisheriger Lauf wird zum Vergleich
+    st.session_state["dl_current"] = current_run
+previous_run = st.session_state.get("dl_previous")
+
+st.plotly_chart(charts.build_duration_curve(current_run, previous_run), width="stretch")
+col_dl1, col_dl2 = st.columns([4, 1])
+col_dl1.caption("Mittlere Tagesleistung = Tagesenergie / 24 h, absteigend sortiert. Positive Werte: Residuallast "
+                "(EE-Defizit), negative Werte: Superpower (EE-Überschuss). Verglichen wird mit dem vorhergehenden "
+                "Berechnungslauf mit anderen Parametern in dieser Browser-Sitzung.")
+if previous_run is not None and col_dl2.button("Vergleich zurücksetzen"):
+    st.session_state.pop("dl_previous", None)
+    st.rerun()
 
 # ---------------------------------------------------------------------------
 # Jahresbilanz

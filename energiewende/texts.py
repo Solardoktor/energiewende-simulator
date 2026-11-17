@@ -55,6 +55,19 @@ def assumptions_markdown() -> str:
     return f"""
 ### Annahmen des Modells
 
+**Szenarien Sektorenkopplung** (Gesamtwerte; modelliert wird die Differenz zum aktuellen Bestand)
+- Status Quo: {c.CURRENT_EV} Mio. E-PKW, {c.CURRENT_LKW:.0f} Mio. E-LKW, {c.CURRENT_DHW} Mio. EW E-Warmwasser, {c.CURRENT_HEATING} Mio. EW E-Heizung
+- Szenario 2030: 10 Mio. E-PKW, 1 Mio. E-LKW, 25 Mio. EW E-Warmwasser, 20 Mio. EW E-Heizung
+- Szenario 2045: 30 Mio. E-PKW, 3 Mio. E-LKW, 60 Mio. EW E-Warmwasser, 40 Mio. EW E-Heizung
+- Mit „Manuelle Werte Sektorenkopplung verwenden“ lassen sich die Werte ausgehend vom gewählten Szenario anpassen
+
+**Geordnete Jahresdauerlinie**
+- Tageswerte von Last − EE geteilt durch 24 h (mittlere Tagesleistung in GW), absteigend sortiert
+- Positive Werte: Residuallast (EE-Defizit), negative Werte: Superpower (EE-Überschuss);
+  die Fläche über bzw. unter der Nulllinie entspricht der Residual- bzw. Superpower-Energie
+- Vergleich mit dem vorhergehenden Berechnungslauf mit anderen Parametern; gespeichert je
+  Browser-Sitzung (nach Neuladen der Seite beginnt der Vergleich neu)
+
 **Mobilität**
 - Elektro-PKW: 12 500 km/Jahr × 18 kWh/100 km ≈ 2 250 kWh/Fahrzeug/Jahr → 40 Mio. PKW ≈ 90 TWh
 - Elektro-LKW: 80 000 km/Jahr × 50 kWh/100 km ≈ 40 000 kWh/Fahrzeug/Jahr → 4 Mio. LKW ≈ 160 TWh
