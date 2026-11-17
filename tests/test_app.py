@@ -84,7 +84,7 @@ def test_heizung_eingabe_ohne_netzabruf(monkeypatch, tmp_path):
 def _dl_traces(at):
     import json
     fig = json.loads(at.get("plotly_chart")[1].proto.spec)
-    return [t["name"] for t in fig["data"]]
+    return [t["name"] for t in fig["data"] if t.get("showlegend", True)]
 
 
 def test_sektorszenarien_und_dauerlinien_vergleich():
@@ -113,3 +113,13 @@ def test_sektorszenarien_und_dauerlinien_vergleich():
 
     at.button[0].click().run()          # Vergleich zurücksetzen
     assert len(_dl_traces(at)) == 1
+
+
+def test_dauerlinie_stundenachse():
+    import json
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    fig = json.loads(at.get("plotly_chart")[1].proto.spec)
+    n = fig["layout"]["xaxis"]["range"][1]
+    assert fig["layout"]["xaxis2"]["range"] == [24, 24 * n]
+    assert fig["layout"]["xaxis2"]["overlaying"] == "x" and fig["layout"]["xaxis2"]["side"] == "top"
+    assert "Stunden [h]" in fig["layout"]["xaxis"]["title"]["text"]

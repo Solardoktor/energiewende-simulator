@@ -14,6 +14,22 @@ from datetime import date, datetime
 import pandas as pd
 import plotly.graph_objects as go
 
+# Schriftgrößen der Grafiken (px)
+FONT_BASE = 14
+FONT_AXIS_TITLE = 16
+FONT_TICK = 14
+FONT_LEGEND = 13
+FONT_NOTE = 12
+GERMAN_SEPARATORS = ",."   # Dezimalkomma, Tausenderpunkt
+
+
+def _axis(**kw) -> dict:
+    """Achse mit einheitlichen Schriftgrößen und Gitter."""
+    title = kw.pop("title", "")
+    return dict(title=dict(text=title, font=dict(size=FONT_AXIS_TITLE)), tickfont=dict(size=FONT_TICK),
+                showgrid=True, gridcolor="rgba(200,200,200,0.25)", **kw)
+
+
 COLORS = {
     "superpower": "#FFF176",
     "base": "#808080",
@@ -91,21 +107,24 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
 
     fig.update_layout(
         barmode="overlay",
-        title=dict(text=f"{title}<br><span style='font-size:13px'>{subtitle}</span>",
-                   font=dict(size=18), x=0.5, xanchor="center"),
-        xaxis=dict(title="", tickformat="%d.%m.", showgrid=True, gridcolor="rgba(200,200,200,0.25)",
-                   # halber Tag Rand, damit die erste und letzte Säule vollständig sichtbar sind
-                   range=[pd.Timestamp(start) - pd.Timedelta(hours=12), pd.Timestamp(end) + pd.Timedelta(hours=12)]),
-        yaxis=dict(title="Energie (GWh)", showgrid=True, gridcolor="rgba(200,200,200,0.25)"),
-        legend=dict(orientation="h", yanchor="top", y=-0.08, xanchor="center", x=0.5, font=dict(size=10)),
-        height=760, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white",
-        margin=dict(l=60, r=30, t=100, b=140), bargap=0, bargroupgap=0,
+        font=dict(size=FONT_BASE),
+        separators=GERMAN_SEPARATORS,
+        title=dict(text=f"{title}<br><span style='font-size:15px'>{subtitle}</span>",
+                   font=dict(size=20), x=0.5, xanchor="center"),
+        xaxis=_axis(tickformat="%d.%m.",
+                    # halber Tag Rand, damit die erste und letzte Säule vollständig sichtbar sind
+                    range=[pd.Timestamp(start) - pd.Timedelta(hours=12), pd.Timestamp(end) + pd.Timedelta(hours=12)]),
+        yaxis=_axis(title="Energie (GWh)"),
+        legend=dict(orientation="h", yanchor="top", y=-0.07, xanchor="center", x=0.5, font=dict(size=FONT_LEGEND)),
+        hoverlabel=dict(font=dict(size=FONT_LEGEND)),
+        height=800, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white",
+        margin=dict(l=70, r=30, t=110, b=170), bargap=0, bargroupgap=0,
         annotations=[dict(
             text="Hinweis: Legende blendet einzelne Segmente aus (Lücke statt Neustapelung).<br>"
                  "(c) Dr. Andreas Horn, www.solardoktor.de  |  Daten: Energy-Charts.info, Open-Meteo  |  Stand: "
                  + datetime.now().strftime("%d.%m.%Y"),
-            xref="paper", yref="paper", x=0.5, y=-0.20, showarrow=False,
-            font=dict(size=11, color="#333333"), xanchor="center")],
+            xref="paper", yref="paper", x=0.5, y=-0.24, showarrow=False,
+            font=dict(size=FONT_NOTE, color="#333333"), xanchor="center")],
     )
     return fig
 
@@ -130,13 +149,21 @@ def build_duration_curve(current: dict, previous: dict | None = None) -> go.Figu
         hovertemplate="Aktuell, Tag %{x}: %{y:.1f} GW<extra></extra>",
     ))
     fig.add_hline(y=0, line=dict(color="#333333", width=1))
+
+    # Zweite x-Achse oben in Stunden (Tag d ↔ Stunde 24·d); unsichtbare Hilfsspur, damit Plotly sie zeichnet
+    n = max(len(cur), len(previous["curve"]) if previous else 0)
+    fig.add_trace(go.Scatter(x=[24, 24 * n], y=[0, 0], xaxis="x2", mode="markers", marker=dict(opacity=0),
+                             showlegend=False, hoverinfo="skip"))
     fig.update_layout(
-        xaxis=dict(title="Tage (absteigend sortiert)", showgrid=True, gridcolor="rgba(200,200,200,0.25)",
-                   range=[1, max(len(cur), len(previous["curve"]) if previous else 0)]),
-        yaxis=dict(title="Residuallast (+) / Superpower (−) [GW, Ø Tagesleistung]", showgrid=True,
-                   gridcolor="rgba(200,200,200,0.25)", zeroline=False),
-        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="left", x=0, font=dict(size=11)),
-        height=560, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white",
-        margin=dict(l=60, r=30, t=30, b=150),
+        font=dict(size=FONT_BASE),
+        separators=GERMAN_SEPARATORS,
+        xaxis=_axis(title="Tage [d] bzw. Stunden [h] (absteigend sortiert)", range=[1, n]),
+        xaxis2=dict(title=dict(text="Stunden [h]", font=dict(size=FONT_AXIS_TITLE)), tickfont=dict(size=FONT_TICK),
+                    overlaying="x", side="top", range=[24, 24 * n], showgrid=False, tickformat=",d"),
+        yaxis=_axis(title="Residuallast (+) / Superpower (−)<br>[GW, Ø Tagesleistung]", zeroline=False),
+        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0, font=dict(size=FONT_LEGEND)),
+        hoverlabel=dict(font=dict(size=FONT_LEGEND)),
+        height=620, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white",
+        margin=dict(l=80, r=30, t=80, b=170),
     )
     return fig

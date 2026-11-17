@@ -7,6 +7,7 @@ Start:  streamlit run SDR_TOOL_Energiewende-Simulator.py
 """
 
 import base64
+import html
 import time
 from dataclasses import replace
 from datetime import date, timedelta
@@ -85,6 +86,15 @@ def fmt_period(p: model.Period | None) -> str:
         return "0 Tage"
     wrap = " ↻" if p.wraps else ""
     return f"{p.days} Tage ({p.start:%d.%m.%Y} bis {p.end:%d.%m.%Y}{wrap})"
+
+
+def result_line(label: str, value: str) -> None:
+    """Ergebniszeile wie st.metric, aber mit kleinerer Schrift für lange Werte."""
+    st.markdown(
+        f"<div style='margin:0.2rem 0 0.8rem 0'>"
+        f"<div style='font-size:0.9rem;opacity:0.75'>{html.escape(label)}</div>"
+        f"<div style='font-size:1.2rem;font-weight:600;line-height:1.4'>{html.escape(value)}</div></div>",
+        unsafe_allow_html=True)
 
 
 def describe_run(p: model.Params, start: date, end: date, location: str,
@@ -335,12 +345,12 @@ sp_gw, sp_date = S["peak_superpower"]
 res_gw, res_date = S["peak_residual"]
 longest_sp = S["surplus_periods"][0] if S["surplus_periods"] else None
 longest_df = S["deficit_periods"][0] if S["deficit_periods"] else None
-st.metric("Längste Superpower / Tage mit Superpower / Ø-Leistung am Tag mit größtem Überschuss",
-          f"{fmt_period(longest_sp)} / {S['surplus_days']} Tage / {gn(sp_gw)} GW "
-          f"({sp_date:%d.%m.%Y})" if sp_date is not None else f"{fmt_period(longest_sp)} / 0 Tage / –")
-st.metric("Längste Dunkelflaute / Tage mit EE-Defizit / Ø-Residualleistung am Tag mit größtem Defizit",
-          f"{fmt_period(longest_df)} / {S['deficit_days']} Tage / {gn(res_gw)} GW "
-          f"({res_date:%d.%m.%Y})" if res_date is not None else f"{fmt_period(longest_df)} / 0 Tage / –")
+result_line("Längste Superpower / Tage mit Superpower / Ø-Leistung am Tag mit größtem Überschuss",
+            f"{fmt_period(longest_sp)} / {S['surplus_days']} Tage / {gn(sp_gw)} GW ({sp_date:%d.%m.%Y})"
+            if sp_date is not None else f"{fmt_period(longest_sp)} / 0 Tage / –")
+result_line("Längste Dunkelflaute / Tage mit EE-Defizit / Ø-Residualleistung am Tag mit größtem Defizit",
+            f"{fmt_period(longest_df)} / {S['deficit_days']} Tage / {gn(res_gw)} GW ({res_date:%d.%m.%Y})"
+            if res_date is not None else f"{fmt_period(longest_df)} / 0 Tage / –")
 
 if S["deficit_periods"]:
     st.subheader("Top-10 Dunkelflauten")
