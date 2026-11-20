@@ -88,12 +88,17 @@ def fmt_period(p: model.Period | None) -> str:
     return f"{p.days} Tage ({p.start:%d.%m.%Y} bis {p.end:%d.%m.%Y}{wrap})"
 
 
-def result_line(label: str, value: str) -> None:
-    """Ergebniszeile wie st.metric, aber mit kleinerer Schrift für lange Werte."""
-    st.markdown(
+def result_line(label: str, value: str, note: str | None = None, target=st) -> None:
+    """Ergebniszeile wie st.metric, aber mit kleinerer Schrift für lange Werte.
+
+    ``target``: Ausgabeort (z. B. eine Spalte); ``note``: optionale kleine Zusatzzeile unter dem Wert.
+    """
+    note_html = (f"<div style='font-size:0.8rem;opacity:0.65'>{html.escape(note)}</div>" if note else "")
+    target.markdown(
         f"<div style='margin:0.2rem 0 0.8rem 0'>"
         f"<div style='font-size:0.9rem;opacity:0.75'>{html.escape(label)}</div>"
-        f"<div style='font-size:1.2rem;font-weight:600;line-height:1.4'>{html.escape(value)}</div></div>",
+        f"<div style='font-size:1.2rem;font-weight:600;line-height:1.4'>{html.escape(value)}</div>"
+        f"{note_html}</div>",
         unsafe_allow_html=True)
 
 
@@ -367,11 +372,12 @@ if S["deficit_periods"]:
 st.caption(texts.DUNKELFLAUTE_DEFINITION)
 
 c1, c2, c3 = st.columns(3)
-c1.metric("EE-Anteil am Verbrauch", gn(S["ee_share"] * 100) + " %")
-c2.metric(f"Ø Temperatur ({location})", gn(S["avg_temp"]) + " °C" if S["avg_temp"] is not None else "n/a")
-c3.metric("Heizgradtage (15 °C)", gn(S["hgt"], 0) if S["hgt"] is not None else "n/a",
-          help=f"Referenz (Normaljahr {config.HGT_REFERENCE_YEARS[0]}–{config.HGT_REFERENCE_YEARS[1]}): "
-               + (gn(hgt_ref, 0) if hgt_ref else "n/a"))
+result_line("EE-Anteil am Verbrauch", gn(S["ee_share"] * 100) + " %", target=c1)
+result_line(f"Ø Temperatur ({location})",
+            gn(S["avg_temp"]) + " °C" if S["avg_temp"] is not None else "n/a", target=c2)
+result_line("Heizgradtage (15 °C)", gn(S["hgt"], 0) if S["hgt"] is not None else "n/a",
+            note=f"Referenz (Normaljahr {config.HGT_REFERENCE_YEARS[0]}–{config.HGT_REFERENCE_YEARS[1]}): "
+                 + (gn(hgt_ref, 0) if hgt_ref else "n/a"), target=c3)
 
 # ---------------------------------------------------------------------------
 # Erläuterungen, Debug, Annahmen, Spenden

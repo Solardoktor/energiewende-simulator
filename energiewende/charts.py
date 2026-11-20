@@ -54,7 +54,9 @@ def _seg(fig, x, y, base, name, hover_label, opacity=1.0, color=None, marker=Non
     fig.add_trace(go.Bar(
         x=x, y=y, base=base, name=name, opacity=opacity,
         marker=marker or dict(color=color),
-        hovertemplate=f"{hover_label}: %{{y:.1f}} GWh<extra></extra>",
+        # Plotly zeigt bei Balken mit base im Hover base + y; daher Segmentwert über customdata
+        customdata=y,
+        hovertemplate=f"{hover_label}: %{{customdata:.1f}} GWh<extra></extra>",
     ))
 
 
@@ -160,7 +162,7 @@ def build_duration_curve(current: dict, previous: dict | None = None) -> go.Figu
         xaxis=_axis(title="Tage [d] bzw. Stunden [h] (absteigend sortiert)", range=[1, n]),
         xaxis2=dict(title=dict(text="Stunden [h]", font=dict(size=FONT_AXIS_TITLE)), tickfont=dict(size=FONT_TICK),
                     overlaying="x", side="top", range=[24, 24 * n], showgrid=False, tickformat=",d"),
-        yaxis=_axis(title="Residuallast (+) / Superpower (−)<br>[GW, Ø Tagesleistung]", zeroline=False),
+        yaxis=_axis(title="Superpower (−) bzw. Residuallast (+)<br>[GW, Ø Tagesleistung]", zeroline=False),
         legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0, font=dict(size=FONT_LEGEND)),
         hoverlabel=dict(font=dict(size=FONT_LEGEND)),
         height=620, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white",

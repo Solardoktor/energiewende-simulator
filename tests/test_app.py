@@ -123,3 +123,17 @@ def test_dauerlinie_stundenachse():
     assert fig["layout"]["xaxis2"]["range"] == [24, 24 * n]
     assert fig["layout"]["xaxis2"]["overlaying"] == "x" and fig["layout"]["xaxis2"]["side"] == "top"
     assert "Stunden [h]" in fig["layout"]["xaxis"]["title"]["text"]
+
+
+def test_stufe1_hover_achse_kennzahlen():
+    import json
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.exception, at.exception
+    main = json.loads(at.get("plotly_chart")[0].proto.spec)
+    seg = next(t for t in main["data"] if t["name"] == "Basis-Last")
+    assert "customdata" in seg and "%{customdata" in seg["hovertemplate"]
+    dl = json.loads(at.get("plotly_chart")[1].proto.spec)
+    assert dl["layout"]["yaxis"]["title"]["text"].startswith("Superpower (−) bzw. Residuallast (+)")
+    assert not at.metric                              # Kennzahlen jetzt als Ergebniszeilen
+    md = " ".join(m.value for m in at.markdown)
+    assert "EE-Anteil am Verbrauch" in md and "Heizgradtage (15 °C)" in md and "Referenz (Normaljahr" in md
