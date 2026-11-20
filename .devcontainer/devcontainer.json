@@ -12,7 +12,7 @@
   },
   "updateContentCommand": "[ -f packages.txt ] && sudo apt update && sudo apt upgrade -y && sudo xargs apt install -y <packages.txt; [ -f requirements-dev.txt ] && pip3 install --user -r requirements-dev.txt; echo '✅ Packages installed and Requirements met'",
   "postAttachCommand": {
-    "server": "streamlit run SDR_TOOL_Energiewende-Simulator.py --server.enableCORS false --server.enableXsrfProtection false"
+    "server": "streamlit run SDR_TOOL_Energiewende-Simulator.py"
   },
   "portsAttributes": {
     "8501": {"label": "Application", "onAutoForward": "openPreview"}

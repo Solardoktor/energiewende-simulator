@@ -151,8 +151,11 @@ def heat_per_ew_day(temp: float, hgt_ref: float) -> float:
 def compute_storage(df0: pd.DataFrame, p: Params) -> StorageResult:
     """Z1 und Z2 aus der Referenzrechnung Z0 (``df0`` aus ``model.compute_daily``)."""
     s = float(p.storage_share)
-    if s <= 0 or p.add_heating_mio <= 0:
+    if s <= 0:
         return StorageResult(False, [])
+    if p.add_heating_mio <= 0:
+        return StorageResult(False, ["Langzeit-Wärmespeicher ohne Wirkung: keine zusätzlichen Heizungs-Einwohner "
+                                     f"über dem Bestand ({config.CURRENT_HEATING} Mio.)."])
     n_s = p.add_heating_mio * s                                  # Speicher-Einwohner (Mio.)
     if p.add_dhw_mio + 1e-9 < n_s:
         return StorageResult(False, [

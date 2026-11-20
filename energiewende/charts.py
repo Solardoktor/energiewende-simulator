@@ -9,6 +9,7 @@ die Farben mischen.
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 
 import numpy as np
@@ -40,9 +41,7 @@ COLORS = {
     "dhw": "#C2185B",
     "heating": "#d32f2f",
     "electrolysis": "#1565C0",   # Dunkelblau
-    "storage_in": "#EF6C00",     # Orange
-    "storage_out_dhw": "#F48FB1",   # Warmwasser heller
-    "storage_out_heat": "#EF9A9A",  # Heizung heller
+    "storage_in": "#CA2345",     # zwischen Heizung (#d32f2f) und Warmwasser (#C2185B)
     "temperature": "#455A64",
 }
 """ AHO: GEN_STYLE = {   # (Füllfarbe halbtransparent, Musterfarbe)
@@ -63,8 +62,8 @@ def _seg(fig, x, y, base, name, hover_label, opacity=1.0, color=None, marker=Non
         x=x, y=y, base=base, name=name, opacity=opacity,
         marker=marker or dict(color=color),
         # Plotly zeigt bei Balken mit base im Hover base + y; daher Segmentwert über customdata
-        customdata=y,
-        hovertemplate=f"{hover_label}: %{{customdata:.1f}} GWh<extra></extra>",
+        customdata=np.column_stack([np.asarray(y, float), np.asarray(y, float) / 24.0]),
+        hovertemplate=f"{hover_label}: %{{customdata[0]:.1f}} GWh / %{{customdata[1]:.1f}} GW<extra></extra>",
     ))
 
 
@@ -87,6 +86,12 @@ def _hatched(key):
         ),
     )
 
+def _hatched_color(color: str) -> dict:
+    """Schraffur in ``color`` auf transparentem Hintergrund (Speicher OUT)."""
+    return dict(color=color, pattern=dict(shape="/", fgcolor=color, fgopacity=1.0, bgcolor="rgba(0,0,0,0)",
+                                          fillmode="replace", size=5, solidity=0.5))
+
+
 def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle: str) -> go.Figure:
     x = df["date"]
     base, mob, dhw, heat = (df[c] for c in ("base_load_gwh", "mobility_gwh", "dhw_gwh", "heating_gwh"))
@@ -98,8 +103,10 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
     # Hover zeigt EE − Last (negativ = Residualenergie).
     fig.add_trace(go.Bar(
         x=x, y=df["ee_day"], name="Superpower", marker_color=COLORS["superpower"], opacity=0.95,
-        customdata=np.column_stack([df["ee_minus_load"], df["total_load_gwh"]]),
-        hovertemplate="EE − Netzlast: %{customdata[0]:.1f} GWh<br>Netzlast: %{customdata[1]:.1f} GWh<extra></extra>",
+        customdata=np.column_stack([df["ee_minus_load"], df["ee_minus_load"] / 24.0,
+                                    df["total_load_gwh"], df["total_load_gwh"] / 24.0]),
+        hovertemplate=("EE − Netzlast: %{customdata[0]:.1f} GWh / %{customdata[1]:.1f} GW<br>"
+                       "Netzlast: %{customdata[2]:.1f} GWh / %{customdata[3]:.1f} GW<extra></extra>"),
     ))
 
     # Langzeit-Wärmespeicher ganz oben: Speicher IN (Netzbezug), darüber Speicher OUT (kein Netzbezug)
@@ -108,9 +115,9 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
         top = base + mob + dhw + heat + elyse0
         s_in, o_ww, o_h = df["storage_in_gwh"], df["storage_out_dhw_gwh"], df["storage_out_heat_gwh"]
         _seg(fig, x, o_h, top + s_in + o_ww, "Speicher OUT (Heiz) – kein Netzbezug", "Speicher OUT (Heiz)",
-             0.7, COLORS["storage_out_heat"])
+             marker=_hatched_color(COLORS["heating"]))
         _seg(fig, x, o_ww, top + s_in, "Speicher OUT (WW) – kein Netzbezug", "Speicher OUT (WW)",
-             0.7, COLORS["storage_out_dhw"])
+             marker=_hatched_color(COLORS["dhw"]))
         _seg(fig, x, s_in, top, "Speicher IN", "Speicher IN", 0.85, COLORS["storage_in"])
 
     # Last als echte Segmente
@@ -129,6 +136,15 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
     if other.abs().sum() > 0:
         _seg(fig, x, other, 0, "Sonstige EE", "Sonstige EE", marker=_hatched("other_ee"))
 
+    # Feste y-Bereiche, damit die zweite Achse (mittlere Leistung) exakt passt: 240 GWh = 10 GW
+    stack_top = base + mob + dhw + heat + df.get("electrolysis_gwh", 0)
+    if "storage_in_gwh" in df:
+        stack_top = stack_top + df["storage_in_gwh"] + df["storage_out_dhw_gwh"] + df["storage_out_heat_gwh"]
+    y_max = 1.04 * float(max(stack_top.max(), df["ee_day"].max(), 1.0))
+    y_min = min(0.0, float((other.clip(upper=0)).min()) * 1.04)
+    fig.add_trace(go.Scatter(x=[x.iloc[0]], y=[0], yaxis="y2", mode="markers", marker=dict(opacity=0),
+                             showlegend=False, hoverinfo="skip"))
+
     fig.update_layout(
         barmode="overlay",
         font=dict(size=FONT_BASE),
@@ -138,11 +154,14 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
         xaxis=_axis(tickformat="%d.%m.",
                     # halber Tag Rand, damit die erste und letzte Säule vollständig sichtbar sind
                     range=[pd.Timestamp(start) - pd.Timedelta(hours=12), pd.Timestamp(end) + pd.Timedelta(hours=12)]),
-        yaxis=_axis(title="Energie (GWh)"),
+        yaxis=_axis(title="Energie (GWh)", range=[y_min, y_max]),
+        yaxis2=dict(title=dict(text="mittlere Leistung (GW)", font=dict(size=FONT_AXIS_TITLE)),
+                    tickfont=dict(size=FONT_TICK), overlaying="y", side="right", showgrid=False,
+                    range=[y_min / 24.0, y_max / 24.0]),
         legend=dict(orientation="h", yanchor="top", y=-0.07, xanchor="center", x=0.5, font=dict(size=FONT_LEGEND)),
         hoverlabel=dict(font=dict(size=FONT_LEGEND)),
         height=800, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white",
-        margin=dict(l=70, r=30, t=110, b=170), bargap=0, bargroupgap=0,
+        margin=dict(l=70, r=80, t=110, b=170), bargap=0, bargroupgap=0,
         annotations=[dict(
             text="Hinweis: Legende blendet einzelne Segmente aus (Lücke statt Neustapelung).<br>"
                  "(c) Dr. Andreas Horn, www.solardoktor.de  |  Daten: Energy-Charts.info, Open-Meteo  |  Stand: "
@@ -222,21 +241,24 @@ def build_temperature_storage(df: pd.DataFrame, start: date, end: date, design_t
         fig.add_trace(go.Bar(x=x, y=df["storage_in_gwh"], name="Speicher IN", marker_color=COLORS["storage_in"],
                              hovertemplate="Speicher IN: %{y:.1f} GWh<extra></extra>"), row=2, col=1)
         fig.add_trace(go.Bar(x=x, y=-df["storage_out_dhw_gwh"], name="Speicher OUT (WW)",
-                             marker_color=COLORS["storage_out_dhw"], customdata=df["storage_out_dhw_gwh"],
+                             marker=_hatched_color(COLORS["dhw"]), customdata=df["storage_out_dhw_gwh"],
                              hovertemplate="Speicher OUT (WW): %{customdata:.1f} GWh<extra></extra>"), row=2, col=1)
         fig.add_trace(go.Bar(x=x, y=-df["storage_out_heat_gwh"], name="Speicher OUT (Heiz)",
-                             marker_color=COLORS["storage_out_heat"], customdata=df["storage_out_heat_gwh"],
+                             marker=_hatched_color(COLORS["heating"]), customdata=df["storage_out_heat_gwh"],
                              hovertemplate="Speicher OUT (Heiz): %{customdata:.1f} GWh<extra></extra>"), row=2, col=1)
-        fig.add_trace(go.Scatter(x=x, y=df["storage_soc_gwh"] / 1000.0, mode="lines", name="Speicherinhalt",
+        fig.add_trace(go.Scatter(x=x, y=df["storage_soc_gwh"], mode="lines", name="Speicherinhalt",
                                  line=dict(color="#6D4C41", width=2),
-                                 hovertemplate="Speicherinhalt: %{y:.2f} TWh<extra></extra>"),
+                                 hovertemplate="Speicherinhalt: %{y:,.0f} GWh<extra></extra>"),
                       row=2, col=1, secondary_y=True)
+        out = df["storage_out_dhw_gwh"] + df["storage_out_heat_gwh"]
+        (l_lo, l_hi, l_step), (r_lo, r_hi, r_step) = paired_axes(
+            float(max(df["storage_in_gwh"].max(), out.max())), float(df["storage_soc_gwh"].max()))
         fig.update_yaxes(title_text="Speicher IN (+) / OUT (−) [GWh]", title_font=dict(size=FONT_AXIS_TITLE),
                          tickfont=dict(size=FONT_TICK), row=2, col=1, secondary_y=False,
-                         gridcolor="rgba(200,200,200,0.25)")
-        fig.update_yaxes(title_text="Speicherinhalt [TWh]", title_font=dict(size=FONT_AXIS_TITLE),
+                         gridcolor="rgba(200,200,200,0.35)", range=[l_lo, l_hi], dtick=l_step, tickformat=",d")
+        fig.update_yaxes(title_text="Speicherinhalt [GWh]", title_font=dict(size=FONT_AXIS_TITLE),
                          tickfont=dict(size=FONT_TICK), row=2, col=1, secondary_y=True, showgrid=False,
-                         rangemode="tozero")
+                         range=[r_lo, r_hi], dtick=r_step, tickformat=",d")
     fig.update_yaxes(title_text="Temperatur [°C]", title_font=dict(size=FONT_AXIS_TITLE),
                      tickfont=dict(size=FONT_TICK), row=1, col=1, gridcolor="rgba(200,200,200,0.25)")
     xr = [pd.Timestamp(start) - pd.Timedelta(hours=12), pd.Timestamp(end) + pd.Timedelta(hours=12)]
@@ -250,3 +272,41 @@ def build_temperature_storage(df: pd.DataFrame, start: date, end: date, design_t
         margin=dict(l=80, r=80, t=30, b=90),
     )
     return fig
+
+
+_NICE = (1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0)
+
+
+def _is_nice(v: float, mults=_NICE) -> bool:
+    if v <= 0:
+        return False
+    m = v / 10 ** math.floor(math.log10(v) + 1e-12)
+    return any(abs(m - x) < 1e-9 for x in mults)
+
+
+def _nice_ceil(v: float, mults=_NICE) -> float:
+    """Kleinste „glatte“ Zahl m × 10^k (m aus ``mults``) ≥ v."""
+    if v <= 0:
+        return 1.0
+    e = 10 ** math.floor(math.log10(v))
+    for k in (e, 10 * e):
+        for m in mults:
+            if m * k >= v * (1 - 1e-12):
+                return m * k
+    return 10 * e
+
+
+def paired_axes(left_abs_max: float, right_max: float, n: int = 2):
+    """Glatte, gitterdeckungsgleiche Achsen: links symmetrisch ±n Schritte, rechts 0 … 2n Schritte.
+
+    Der Faktor zwischen den Schrittweiten ist ebenfalls „glatt“ (z. B. 3: links 500, rechts 1 500).
+    Rückgabe: ((links_min, links_max, links_schritt), (rechts_min, rechts_max, rechts_schritt)).
+    """
+    s_l = _nice_ceil(max(left_abs_max, 1.0) / n, (1.0, 2.0, 2.5, 5.0))
+    need = max(right_max, 1.0) / (2 * n)
+    s_r = _nice_ceil(need)
+    for _ in range(40):                         # nächste glatte Schrittweite mit glattem Faktor zu links
+        if _is_nice(s_r / s_l):
+            break
+        s_r = _nice_ceil(s_r * 1.0001)
+    return (-n * s_l, n * s_l, s_l), (0.0, 2 * n * s_r, s_r)

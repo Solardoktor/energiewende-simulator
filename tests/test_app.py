@@ -149,14 +149,14 @@ def test_stufe2_elektrolyse_szenarien_und_grenzen():
     sector.set_value("Szenario 2045").run()
     assert not at.exception, at.exception
     caps = " ".join(c.value for c in at.sidebar.caption)
-    assert "Elektrolyse: 10,0 GW" in caps and "240 GWh" in caps
+    assert "Elektrolyse: 10 GW" in caps and "240 GWh" in caps
     assert any("Volllaststunden" in c.value for c in at.caption)
-    assert "Elektrolyse 10,0 GW" in _dl_traces(at)[-1]
+    assert "Elektrolyse 10 GW" in _dl_traces(at)[-1]
     next(c for c in at.sidebar.checkbox if "Sektorenkopplung" in c.label).check().run()
     ni = {n.label.split(" (")[0]: n for n in at.sidebar.number_input}
-    assert ni["Millionen Elektro-PKW"].max == 50 and ni["Millionen Elektro-LKW"].max == 5.0
-    assert ni["Millionen Einwohner elektrische Heizung"].max == 100
-    assert ni["Elektrolyse-Leistung"].value == 10.0 and ni["Elektrolyse-Leistung"].max == 20.0
+    assert ni["Elektro-PKW"].max == 50 and ni["Elektro-LKW"].max == 5.0
+    assert ni["Elektrische Heizung"].max == 100 and ni["Elektrische Heizung"].label.endswith("[Mio. Einwohner]")
+    assert ni["Elektrolyse"].value == 10 and ni["Elektrolyse"].max == 20 and ni["Elektrolyse"].label.endswith("[GW]")
 
 
 def test_stufe3_speicherbilanz():
@@ -180,14 +180,16 @@ def test_stufe3_speicherbilanz():
     assert len(at.get("plotly_chart")) == 3
     assert any("Speicherbilanz" in h.value for h in at.subheader)
     kpi = at.dataframe[1].value
-    assert "Speicher IN" in kpi["Kennzahl"].tolist() and "Mehrverbrauch Speicherlösung gesamt" in kpi["Kennzahl"].tolist()
+    assert "Ladestrom für Langzeit-Wärmespeicher aus Superpower" in kpi["Kennzahl"].tolist()
+    assert "Mehrverbrauch Langzeitspeicher gesamt" in kpi["Kennzahl"].tolist()
+    assert "Änderung Elektrolyse durch Mehrbedarf" not in kpi["Kennzahl"].tolist()
     ctrl = next(c.value for c in at.caption if c.value.startswith("Kontrolle"))
     assert "-0,000" in ctrl or " 0,000" in ctrl
     comp = at.dataframe[2].value
     assert list(comp.columns) == ["Kennzahl", "Z0 Referenz (WP)", "Z1 direktelektrisch", "Z2 mit Speicher"]
     # WW-Prüfung: Warmwasser zu klein
     next(c for c in at.sidebar.checkbox if "Sektorenkopplung" in c.label).check().run()
-    next(n for n in at.sidebar.number_input if n.label.startswith("Millionen Einwohner elektrische Warmwasser")).set_value(20).run()
+    next(n for n in at.sidebar.number_input if n.label.startswith("Elektrische Warmwasserbereitung")).set_value(20).run()
     assert any("Warmwasser-Eingabe zu klein" in w.value for w in at.sidebar.warning)
     assert any("mindestens" in i.value for i in at.info)
     assert before is not None
@@ -217,9 +219,42 @@ def test_stufe4_darstellung_mit_ohne_speicher():
     assert not top10().equals(top_mit)
     # stationäres Jahr (Standard) und linear
     kpi = at.dataframe[1].value.set_index("Kennzahl")["Wert"]
-    assert kpi["Rechenweise"] == "stationäres Jahr" and "Speicherinhalt am Jahreswechsel" in kpi.index
+    assert kpi["Rechenweise"] == "stationäres Jahr (zirkulär)" and "Speicherinhalt am Jahreswechsel" in kpi.index
     ctrl = next(c.value for c in at.caption if c.value.startswith("Kontrolle"))
     assert "0,000" in ctrl
     next(c for c in at.sidebar.checkbox if c.label.startswith("Speicher als stationäres Jahr")).uncheck().run()
     kpi = at.dataframe[1].value.set_index("Kennzahl")["Wert"]
     assert kpi["Rechenweise"] == "linear" and "Speicherinhalt aus Vorjahr" in kpi.index
+
+
+
+def test_verbesserungen_hover_gw_achsen_hinweise():
+    import json
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    # Speicheranteil ohne zusätzliche Heizungs-EW → Hinweis statt stiller Wirkungslosigkeit
+    next(s for s in at.sidebar.slider if s.label.startswith("Anteil Langzeit")).set_value(30).run()
+    assert any("ohne Wirkung" in w.value for w in at.sidebar.warning)
+    next(r for r in at.sidebar.radio if r.label == "Szenario").set_value(
+        "Agora Energiewende: Klimaneutrales Deutschland 2045").run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Szenario 2045").run()
+    assert not at.exception, at.exception
+    main = json.loads(at.get("plotly_chart")[0].proto.spec)
+    seg = next(t for t in main["data"] if t.get("name") == "Basis-Last")
+    assert "GWh / %{customdata[1]:.1f} GW" in seg["hovertemplate"]
+    lay = main["layout"]
+    assert lay["yaxis2"]["overlaying"] == "y"
+    assert lay["yaxis2"]["range"][1] * 24 == __import__("pytest").approx(lay["yaxis"]["range"][1])
+    sub = lay["title"]["text"]
+    assert "e-PKW (30 Mio.)" in sub and "e-LKW (3,0 Mio.)" in sub and "Elektrolyse (10 GW)" in sub
+    out_h = next(t for t in main["data"] if t.get("name", "").startswith("Speicher OUT (Heiz)"))
+    assert out_h["marker"]["pattern"]["bgcolor"] == "rgba(0,0,0,0)" and out_h["marker"]["color"] == "#d32f2f"
+    temp = json.loads(at.get("plotly_chart")[1].proto.spec)
+    shapes = temp["layout"].get("shapes", [])
+    assert len(shapes) == 2                                   # Heizgrenze und Auslegungstemperatur
+    y2 = temp["layout"]["yaxis3"] if "yaxis3" in temp["layout"] else None
+    if y2:                                                    # Gitter deckungsgleich: 4 Intervalle je Achse
+        y_l = temp["layout"]["yaxis2"]
+        assert (y_l["range"][1] - y_l["range"][0]) / y_l["dtick"] == 4
+        assert (y2["range"][1] - y2["range"][0]) / y2["dtick"] == 4
+    tab = at.dataframe[0].value["(Mehr-) Verbrauch"].tolist()
+    assert "Warmwasser (Netzbezug)" in tab and any(r.startswith("Speicherentladung") for r in tab)

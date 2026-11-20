@@ -106,16 +106,16 @@ CURRENT_HEATING = 5   # Mio. EW
 SECTOR_STATUS_QUO = "Status Quo (aktueller Bestand)"
 SECTOR_SCENARIOS = {
     SECTOR_STATUS_QUO: {"ev": CURRENT_EV, "lkw": CURRENT_LKW, "dhw": CURRENT_DHW, "heating": CURRENT_HEATING,
-                        "electrolysis": 0.0},
-    "Szenario 2030": {"ev": 10, "lkw": 1.0, "dhw": 25, "heating": 20, "electrolysis": 1.0},
-    "Szenario 2045": {"ev": 30, "lkw": 3.0, "dhw": 60, "heating": 40, "electrolysis": 10.0},
+                        "electrolysis": 0},
+    "Szenario 2030": {"ev": 10, "lkw": 1.0, "dhw": 25, "heating": 20, "electrolysis": 1},
+    "Szenario 2045": {"ev": 30, "lkw": 3.0, "dhw": 60, "heating": 40, "electrolysis": 10},
 }
 
 # Eingabegrenzen Sektorenkopplung (Gesamtwerte)
 MAX_EV = 50          # Mio. E-PKW
 MAX_LKW = 5.0        # Mio. E-LKW
 MAX_HEAT_EW = 100    # Mio. EW (Warmwasser und Heizung)
-MAX_ELECTROLYSIS_GW = 20.0
+MAX_ELECTROLYSIS_GW = 20
 
 # Langzeit-Wärmespeicher (direktelektrische Beladung, COP 1)
 STORAGE_DHW_FACTOR = 1.5          # Warmwasser direktelektrisch: +50 % gegenüber bisheriger Annahme
