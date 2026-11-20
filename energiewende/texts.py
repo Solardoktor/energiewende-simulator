@@ -40,7 +40,8 @@ Daten: CC BY 4.0, Attribution: energy-charts.info
 DEBUG_COLUMNS = """
 **Spalten-Erklärung**
 - `ee_day`: Summe der (skalierten) EE (Solar + Wind Onshore + Wind Offshore + Sonstige EE)
-- `total_load_gwh`: Gesamtlast (Basis-Last + Zusatzlasten)
+- `total_load_gwh`: Gesamtlast (Basis-Last + Zusatzlasten + Elektrolyse)
+- `electrolysis_gwh`: Elektrolyse = min(Leistung × 24 h, Überschuss vor Elektrolyse)
 - `ee_minus_load` = `ee_day` − `total_load_gwh`
 - `superpower_day` = max(0, ee_minus_load) → positiver Überschuss
 - `residual_day` = max(0, −ee_minus_load) → fehlende Energie
@@ -56,9 +57,16 @@ def assumptions_markdown() -> str:
 ### Annahmen des Modells
 
 **Szenarien Sektorenkopplung** (Gesamtwerte; modelliert wird die Differenz zum aktuellen Bestand)
-- Status Quo: {c.CURRENT_EV} Mio. E-PKW, {c.CURRENT_LKW:.0f} Mio. E-LKW, {c.CURRENT_DHW} Mio. EW E-Warmwasser, {c.CURRENT_HEATING} Mio. EW E-Heizung
-- Szenario 2030: 10 Mio. E-PKW, 1 Mio. E-LKW, 25 Mio. EW E-Warmwasser, 20 Mio. EW E-Heizung
-- Szenario 2045: 30 Mio. E-PKW, 3 Mio. E-LKW, 60 Mio. EW E-Warmwasser, 40 Mio. EW E-Heizung
+- Status Quo: {c.CURRENT_EV} Mio. E-PKW, {c.CURRENT_LKW:.0f} Mio. E-LKW, {c.CURRENT_DHW} Mio. EW E-Warmwasser, {c.CURRENT_HEATING} Mio. EW E-Heizung, 0 GW Elektrolyse
+- Szenario 2030: 10 Mio. E-PKW, 1 Mio. E-LKW, 25 Mio. EW E-Warmwasser, 20 Mio. EW E-Heizung, 1 GW Elektrolyse
+- Szenario 2045: 30 Mio. E-PKW, 3 Mio. E-LKW, 60 Mio. EW E-Warmwasser, 40 Mio. EW E-Heizung, 10 GW Elektrolyse
+- Eingabegrenzen (manuell): bis {c.MAX_EV} Mio. E-PKW, {c.MAX_LKW:.0f} Mio. E-LKW, {c.MAX_HEAT_EW} Mio. EW Warmwasser bzw. Heizung, {c.MAX_ELECTROLYSIS_GW:.0f} GW Elektrolyse
+
+**Elektrolyse**
+- Elektrolyseure nutzen ausschließlich Erzeugungsüberschüsse: je Tag min(Leistung × 24 h, EE − Last), wobei
+  die Last Basis-Last, Mobilität, Warmwasser und Heizung umfasst (Intra-Day-Ausgleich wie im übrigen Modell)
+- Elektrolyse zählt zum Verbrauch (CO₂ 0 g/kWh); die verbleibende Superpower sinkt entsprechend, Dunkelflauten
+  ändern sich nicht. Unter der Jahresbilanz werden Energie und Volllaststunden (Energie ÷ Leistung) ausgewiesen
 - Mit „Manuelle Werte Sektorenkopplung verwenden“ lassen sich die Werte ausgehend vom gewählten Szenario anpassen
 
 **Geordnete Jahresdauerlinie**

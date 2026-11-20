@@ -36,6 +36,7 @@ COLORS = {
     "mobility": "#FF99FF",
     "dhw": "#C2185B",
     "heating": "#d32f2f",
+    "electrolysis": "#81D4FA",
 }
 """ AHO: GEN_STYLE = {   # (Füllfarbe halbtransparent, Musterfarbe)
     "solar": ("rgba(255,204,0,0.35)", "#FFCC00"),
@@ -95,6 +96,9 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
     ))
 
     # Last als echte Segmente
+    elyse = df["electrolysis_gwh"] if "electrolysis_gwh" in df else base * 0
+    if elyse.sum() > 0:
+        _seg(fig, x, elyse, base + mob + dhw + heat, "Elektrolyse", "Elektrolyse", 0.85, COLORS["electrolysis"])
     _seg(fig, x, heat, base + mob + dhw, "Heizung", "Heizung", 0.85, COLORS["heating"])
     _seg(fig, x, dhw, base + mob, "Warmwasser", "Warmwasser", 0.85, COLORS["dhw"])
     _seg(fig, x, mob, base, "Mobilität", "Mobilität", 0.85, COLORS["mobility"])

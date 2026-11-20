@@ -117,3 +117,20 @@ def test_dauerlinie_sortiert_und_konsistent():
     assert dl[dl > 0].sum() * 24 == pytest.approx(S["sums_gwh"]["residual_day"])
     assert -dl[dl < 0].sum() * 24 == pytest.approx(S["sums_gwh"]["superpower_day"])
     assert (dl > 0).sum() == S["deficit_days"]
+
+
+def test_elektrolyse_nur_ueberschuss_und_grenze():
+    base = model.Params(target_solar=300, target_wind_onshore=150, target_wind_offshore=40)
+    d0, S0 = run(base)
+    from dataclasses import replace
+    d1, S1 = run(replace(base, electrolysis_gw=10))
+    e = d1["electrolysis_gwh"]
+    assert (d0["electrolysis_gwh"] == 0).all()
+    assert e.max() <= 240 + 1e-9 and e.sum() > 0
+    assert (e[d0["superpower_day"] <= 0] == 0).all()                      # nur an Überschusstagen
+    assert e.to_numpy() == pytest.approx(np.minimum(240, d0["superpower_day"]).to_numpy())
+    assert S1["sums_gwh"]["superpower_day"] == pytest.approx(S0["sums_gwh"]["superpower_day"] - e.sum())
+    assert d1["residual_day"].to_numpy() == pytest.approx(d0["residual_day"].to_numpy())
+    assert [p.days for p in S1["deficit_periods"]] == [p.days for p in S0["deficit_periods"]]
+    assert S1["co2_by_category"]["electrolysis_gwh"] == 0
+    assert S1["co2_mean"] < S0["co2_mean"]                               # Verbrauch größer, Residual gleich

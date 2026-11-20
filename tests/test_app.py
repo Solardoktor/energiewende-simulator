@@ -137,3 +137,23 @@ def test_stufe1_hover_achse_kennzahlen():
     assert not at.metric                              # Kennzahlen jetzt als Ergebniszeilen
     md = " ".join(m.value for m in at.markdown)
     assert "EE-Anteil am Verbrauch" in md and "Heizgradtage (15 °C)" in md and "Referenz (Normaljahr" in md
+
+
+def test_stufe2_elektrolyse_szenarien_und_grenzen():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    tab = at.dataframe[0].value
+    assert "Elektrolyse" in tab["(Mehr-) Verbrauch"].tolist()
+    i = tab["(Mehr-) Verbrauch"].tolist().index("Elektrolyse")
+    assert tab["Erzeugung"].iloc[i] == "" and tab["Erzeugung"].tolist()[-2:] == ["Summe EE", "Residualerzeugung"]
+    sector = next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung")
+    sector.set_value("Szenario 2045").run()
+    assert not at.exception, at.exception
+    caps = " ".join(c.value for c in at.sidebar.caption)
+    assert "Elektrolyse: 10,0 GW" in caps and "240 GWh" in caps
+    assert any("Volllaststunden" in c.value for c in at.caption)
+    assert "Elektrolyse 10,0 GW" in _dl_traces(at)[-1]
+    next(c for c in at.sidebar.checkbox if "Sektorenkopplung" in c.label).check().run()
+    ni = {n.label.split(" (")[0]: n for n in at.sidebar.number_input}
+    assert ni["Millionen Elektro-PKW"].max == 50 and ni["Millionen Elektro-LKW"].max == 5.0
+    assert ni["Millionen Einwohner elektrische Heizung"].max == 100
+    assert ni["Elektrolyse-Leistung"].value == 10.0 and ni["Elektrolyse-Leistung"].max == 20.0

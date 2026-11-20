@@ -114,6 +114,8 @@ def describe_run(p: model.Params, start: date, end: date, location: str,
         extras.append(f"Last {p.load_scale * 100:.0f} %")
     if location != config.DEFAULT_LOCATION:
         extras.append(f"Temp. {location}")
+    if p.electrolysis_gw > 0:
+        extras.append(f"Elektrolyse {gn(p.electrolysis_gw)} GW")
     return (f"{start:%d.%m.%Y}–{end:%d.%m.%Y} | {gen}<br>"
             f"PKW {gn(ev, 0)} | LKW {gn(lkw)} | WW {gn(dhw, 0)} | Heiz. {gn(heat, 0)} Mio | "
             f"WP Luft/Sole {p.share_air_hp * 100:.0f}/{p.share_water_hp * 100:.0f} % | "
@@ -228,18 +230,29 @@ use_manual_sector = sb.checkbox("Manuelle Werte Sektorenkopplung verwenden", val
 sb.caption("Werte sind Gesamtzahlen; die Differenz zum aktuellen Bestand wird als Zusatzlast modelliert.")
 if use_manual_sector:
     sb.markdown("**Elektromobilität**")
-    mio_ev = sb.number_input("Millionen Elektro-PKW (2 … 40, gesamt)", config.CURRENT_EV, 40, int(ssc["ev"]), 1)
-    mio_lkw = sb.number_input("Millionen Elektro-LKW (0 … 4, gesamt)", config.CURRENT_LKW, 4.0,
-                              float(ssc["lkw"]), 0.1, format="%.1f")
+    mio_ev = sb.number_input(f"Millionen Elektro-PKW ({config.CURRENT_EV} … {config.MAX_EV}, gesamt)",
+                             config.CURRENT_EV, config.MAX_EV, int(ssc["ev"]), 1)
+    mio_lkw = sb.number_input(f"Millionen Elektro-LKW (0 … {config.MAX_LKW:.0f}, gesamt)", config.CURRENT_LKW,
+                              config.MAX_LKW, float(ssc["lkw"]), 0.1, format="%.1f")
     sb.markdown("**Wärme**")
-    mio_dhw = sb.number_input("Millionen Einwohner elektrische Warmwasserbereitung (15 … 80, gesamt)",
-                              config.CURRENT_DHW, 80, int(ssc["dhw"]), 1)
-    mio_heat = sb.number_input("Millionen Einwohner elektrische Heizung (5 … 80, gesamt)",
-                               config.CURRENT_HEATING, 80, int(ssc["heating"]), 1)
+    mio_dhw = sb.number_input(f"Millionen Einwohner elektrische Warmwasserbereitung "
+                              f"({config.CURRENT_DHW} … {config.MAX_HEAT_EW}, gesamt)",
+                              config.CURRENT_DHW, config.MAX_HEAT_EW, int(ssc["dhw"]), 1)
+    mio_heat = sb.number_input(f"Millionen Einwohner elektrische Heizung "
+                               f"({config.CURRENT_HEATING} … {config.MAX_HEAT_EW}, gesamt)",
+                               config.CURRENT_HEATING, config.MAX_HEAT_EW, int(ssc["heating"]), 1)
+    sb.markdown("**Elektrolyse**")
+    electrolysis_gw = sb.number_input(f"Elektrolyse-Leistung (0 … {config.MAX_ELECTROLYSIS_GW:.0f} GW)", 0.0,
+                                      config.MAX_ELECTROLYSIS_GW, float(ssc["electrolysis"]), 0.5, format="%.1f",
+                                      help="Elektrolyseure nutzen ausschließlich Erzeugungsüberschüsse (Superpower), "
+                                           "höchstens Leistung × 24 h je Tag.")
 else:
     mio_ev, mio_lkw, mio_dhw, mio_heat = ssc["ev"], ssc["lkw"], ssc["dhw"], ssc["heating"]
+    electrolysis_gw = float(ssc["electrolysis"])
 sb.caption(f"E-PKW: {gn(mio_ev, 0)} Mio | E-LKW: {gn(mio_lkw)} Mio | "
-           f"E-Warmwasser: {gn(mio_dhw, 0)} Mio EW | E-Heizung: {gn(mio_heat, 0)} Mio EW")
+           f"E-Warmwasser: {gn(mio_dhw, 0)} Mio EW | E-Heizung: {gn(mio_heat, 0)} Mio EW | "
+           f"Elektrolyse: {gn(electrolysis_gw)} GW")
+sb.caption(f"Max. Tagesbedarf Elektrolyse: {gn(electrolysis_gw)} GW × 24 h = {gn(electrolysis_gw * 24, 0)} GWh")
 weekend_share = sb.slider("Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)", 0, 50, 20,
                           help="Dieser Anteil wird auf Wochenenden und Feiertage gelegt, "
                                "der Rest folgt dem saisonalen Profil über alle Tage.") / 100.0
@@ -277,6 +290,7 @@ params = model.Params(
     add_dhw_mio=add_dhw, add_heating_mio=add_heat,
     share_air_hp=hp_air / 100.0, share_water_hp=hp_water / 100.0,
     co2_specific=float(co2_specific), hgt_reference=hgt_ref,
+    electrolysis_gw=float(electrolysis_gw),
 )
 holiday_dates = frozenset(holidays.Germany(years=range(start_date.year, end_date.year + 1)).keys())
 try:
@@ -300,7 +314,8 @@ else:
     gen_txt = (f"Gesamt-Nettostromerzeugung mit Ist-Leistung, unskaliert (am Zeitraumende "
                f"{status_quo['solar']:.0f} GWp Solar, {status_quo['wind_onshore'] + status_quo['wind_offshore']:.0f} GW Wind)")
 subtitle = (f"{gen_txt}<br>Gesamt-Last aus Basis-Last, e-PKW ({mio_ev:.1f} Mio.), e-LKW ({mio_lkw:.1f} Mio.), "
-            f"e-Warmwasser ({mio_dhw:.0f} Mio. EW), e-Heizung ({mio_heat:.0f} Mio. EW)")
+            f"e-Warmwasser ({mio_dhw:.0f} Mio. EW), e-Heizung ({mio_heat:.0f} Mio. EW)"
+            + (f", Elektrolyse ({gn(electrolysis_gw)} GW)" if electrolysis_gw > 0 else ""))
 fig = charts.build_figure(df, start_date, end_date,
                           f"Tagesbilanz von Stromerzeugung und Verbrauch in Deutschland  {period_str}", subtitle)
 st.plotly_chart(fig, width="stretch")
@@ -337,14 +352,20 @@ s = S["sums_gwh"]
 twh = {k: v / 1000.0 for k, v in s.items()}
 co2c = S["co2_by_category"]
 summary = pd.DataFrame({
-    "Erzeugung": ["Solar", "Wind Onshore", "Wind Offshore", "Sonstige EE", "Summe EE", "Residualerzeugung"],
-    "Wert [TWh]": [gn(twh[k]) for k in ("solar_scaled", "wind_onshore_scaled", "wind_offshore_scaled",
-                                         "other_ee", "ee_day", "residual_day")],
-    "(Mehr-) Verbrauch": ["Basis-Last", "Mobilität", "Warmwasser", "Heizung", "Summe Verbrauch", "Superpower"],
+    "Erzeugung": ["Solar", "Wind Onshore", "Wind Offshore", "Sonstige EE", "", "Summe EE", "Residualerzeugung"],
+    "Wert [TWh]": [gn(twh[k]) if k else "" for k in ("solar_scaled", "wind_onshore_scaled", "wind_offshore_scaled",
+                                                     "other_ee", None, "ee_day", "residual_day")],
+    "(Mehr-) Verbrauch": ["Basis-Last", "Mobilität", "Warmwasser", "Heizung", "Elektrolyse",
+                          "Summe Verbrauch", "Superpower"],
     "Wert [TWh] ": [gn(twh[k]) for k in (*model.LOAD_COLS, "total_load_gwh", "superpower_day")],
     "CO₂ [g/kWh]": [gn(co2c[k], 0) for k in model.LOAD_COLS] + [gn(S["co2_mean"], 0), "0"],
 })
 st.dataframe(summary, width="stretch", hide_index=True)
+if electrolysis_gw > 0:
+    elyse_gwh = S["sums_gwh"]["electrolysis_gwh"]
+    st.caption(f"Elektrolyse (nachrichtlich): {gn(elyse_gwh / 1000)} TWh, "
+               f"{gn(elyse_gwh / electrolysis_gw, 0)} Volllaststunden bei {gn(electrolysis_gw)} GW "
+               f"(Energie ÷ Leistung; Maximum {gn(len(df) * 24, 0)} h)")
 
 sp_gw, sp_date = S["peak_superpower"]
 res_gw, res_date = S["peak_residual"]
@@ -401,7 +422,7 @@ with st.expander("Debug: Datenbasis und tägliche Differenz EE – Verbrauch", e
     if len(incomplete):
         st.dataframe(incomplete.assign(date=incomplete["date"].dt.strftime("%d.%m.%Y")), hide_index=True)
     debug_cols = ["date", "coverage", "temp_mean", "ee_day", "total_load_gwh", "ee_minus_load",
-                  "superpower_day", "residual_day", "other_ee", "pumped_storage_net",
+                  "superpower_day", "residual_day", "electrolysis_gwh", "other_ee", "pumped_storage_net",
                   *[f"installed_{k}" for k in model.GEN_KEYS], *[f"scale_{k}" for k in model.GEN_KEYS]]
     debug_df = df[debug_cols].copy()
     debug_df["date"] = debug_df["date"].dt.strftime("%d.%m.%Y")

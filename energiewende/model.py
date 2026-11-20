@@ -16,7 +16,8 @@ from . import config
 GEN_KEYS = ("solar", "wind_onshore", "wind_offshore")
 GEN_SERIES = {"solar": config.SOLAR_SERIES, "wind_onshore": config.WIND_ONSHORE_SERIES,
               "wind_offshore": config.WIND_OFFSHORE_SERIES}
-LOAD_COLS = ("base_load_gwh", "mobility_gwh", "dhw_gwh", "heating_gwh")
+BASE_LOAD_COLS = ("base_load_gwh", "mobility_gwh", "dhw_gwh", "heating_gwh")
+LOAD_COLS = (*BASE_LOAD_COLS, "electrolysis_gwh")      # Elektrolyse nimmt nur Überschuss auf
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class Params:
     share_water_hp: float = 0.1
     co2_specific: float = config.CO2_DEFAULT_G_PER_KWH
     hgt_reference: float | None = None
+    electrolysis_gw: float = 0.0
 
     @property
     def share_direct(self) -> float:
@@ -140,8 +142,6 @@ def compute_daily(raw: pd.DataFrame, installed_daily: pd.DataFrame, temps: pd.Da
     df["heating_gwh"] = df["heat_demand_gwh"] * (p.share_direct + p.share_air_hp / df["cop_air"]
                                                  + p.share_water_hp / df["cop_water"])
 
-    df["total_load_gwh"] = df[list(LOAD_COLS)].sum(axis=1)
-
     # Erzeugung Solar/Wind, optional auf Zielleistung skaliert
     inst = installed_daily.reindex(df["date"])
     for k in GEN_KEYS:
@@ -167,6 +167,11 @@ def compute_daily(raw: pd.DataFrame, installed_daily: pd.DataFrame, temps: pd.Da
 
     # Bilanz
     df["ee_day"] = df[[f"{k}_scaled" for k in GEN_KEYS]].sum(axis=1) + df["other_ee"]
+    load_before = df[list(BASE_LOAD_COLS)].sum(axis=1)
+    # Elektrolyse: nur Tagesüberschuss, höchstens Leistung × 24 h
+    df["electrolysis_gwh"] = np.minimum(max(0.0, p.electrolysis_gw) * 24.0,
+                                        np.maximum(0.0, df["ee_day"] - load_before))
+    df["total_load_gwh"] = load_before + df["electrolysis_gwh"]
     df["ee_minus_load"] = df["ee_day"] - df["total_load_gwh"]
     df["superpower_day"] = np.maximum(0.0, df["ee_minus_load"])
     df["residual_day"] = np.maximum(0.0, -df["ee_minus_load"])
