@@ -46,6 +46,9 @@ DEBUG_COLUMNS = """
 - `superpower_day` = max(0, ee_minus_load) → positiver Überschuss
 - `residual_day` = max(0, −ee_minus_load) → fehlende Energie
 - `coverage`: Anteil der Stunden des Tages mit Energy-Charts-Daten (1,0 = vollständig)
+- Langzeit-Wärmespeicher (nur wenn aktiv): `storage_surplus_avail` (U, Überschuss nach Elektrolyse vor dem Einspeichern),
+  `storage_residual_z1` (R), `storage_in_gwh`, `storage_out_dhw_gwh`, `storage_out_heat_gwh`, `storage_loss_gwh`,
+  `storage_soc_gwh` (Inhalt am Tagesende), `storage_uncovered_gwh` (nicht deckbar), `extra_*` (Mehrbedarf direktelektrisch)
 - `installed_*`: installierte Leistung (GW, interpoliert), `scale_*`: Skalierungsfaktor Ziel/Ist
 """
 
@@ -75,6 +78,37 @@ def assumptions_markdown() -> str:
   die Fläche über bzw. unter der Nulllinie entspricht der Residual- bzw. Superpower-Energie
 - Vergleich mit dem vorhergehenden Berechnungslauf mit anderen Parametern; gespeichert je
   Browser-Sitzung (nach Neuladen der Seite beginnt der Vergleich neu)
+
+**Langzeit-Wärmespeicher**
+- Ziel: Wärmebedarf (Warmwasser und Heizung) von Tagen mit Residuallast auf frühere Tage mit Überschuss verschieben.
+- „Anteil Langzeit-Wärmespeicher“ bezieht sich auf die *zusätzlichen* Heizungs-Einwohner (über dem Bestand von
+  {c.CURRENT_HEATING} Mio.) und ist den Wärmepumpen-Anteilen übergeordnet; diese beziehen sich auf den Rest.
+  Das Warmwasser derselben Speicher-Haushalte kommt ebenfalls aus dem Speicher und gehört zur Warmwasser-Eingabe,
+  die daher mindestens {c.CURRENT_DHW} Mio. + Speicher-Einwohner betragen muss.
+- Beispiel: 16 Mio. EW Warmwasser, 15 Mio. EW Heizung, 10 % Langzeit-Wärmespeicher, 50 % Luft-Wasser-WP,
+  20 % Wasser-Wasser-WP → 5 Mio. Bestand + 10 Mio. zusätzliche Heizungs-EW. Ohne Langzeitspeicher: 5 Mio. Luft-WP,
+  2 Mio. Sole-WP, 3 Mio. direktelektrisch. Mit Langzeitspeicher: 1 Mio. Speicher-Haushalte (Heizung und
+  Warmwasser direktelektrisch über den Speicher), 4,5 Mio. Luft-WP, 1,8 Mio. Sole-WP, 2,7 Mio. direktelektrisch.
+- Beladung direktelektrisch (COP 1): Nur so lassen sich ausreichend hohe Temperaturen erreichen, um die Energie
+  ohne Stromverbrauch auszuspeichern. Warmwasser direktelektrisch: +50 % gegenüber der bisherigen Annahme.
+- Hinweis: Die Langzeitspeicherung erhöht den Stromverbrauch, weil Wärmepumpen (Tages-COP) durch direktelektrische
+  Beheizung ersetzt werden und der Speicher Wärmeverluste hat. Ausgewiesen als „Mehrbedarf direktelektrische
+  Wärmespeicherung“ und in der Speicherbilanz.
+- Rechenzustände: Z0 ohne Speicher (Referenz, Werte in Klammern), Z1 Speicher-Haushalte direktelektrisch ohne
+  Verschiebung, Z2 mit Speicher (Hauptergebnis). Elektrolyse hat Vorrang vor dem Einspeichern.
+- Verfahren: Rückwärts vom Zeitraumende wird für jeden Tag mit Residuallast der speicherfähige Bedarf ausgespeichert
+  (höchstens bis zur Residuallast) und im nächstgelegenen früheren Überschuss innerhalb der max. Speicherdauer
+  eingespeichert; je Tag Speicherdauer wird der Verlust (in % des Inhalts) berücksichtigt. Was innerhalb der
+  Speicherdauer nicht gedeckt werden kann, bleibt Residuallast. Die Zuordnung ist nachvollziehbar, aber nicht in
+  jedem Sonderfall die global beste.
+- Leistungsgrenzen: Entladeleistung = Heizlast entsprechend der Tagestemperatur bis zur Auslegungstemperatur
+  (+ Warmwasser); der Mehrbedarf unterhalb der Auslegungstemperatur kommt aus dem Netz. Ladeleistung = Heizlast
+  bei {c.STORAGE_CHARGE_DESIGN_TEMP:.0f} °C (+ Warmwasser).
+- Stationäres Jahr (Standard): wie bei den Dunkelflauten werden Ende und Anfang des Zeitraums verknüpft; Defizite
+  am Zeitraumbeginn werden aus Überschüssen am Zeitraumende gedeckt, der Speicherinhalt zu Beginn entspricht dem am
+  Ende. Ohne diese Option werden der notwendige Speicherinhalt aus dem Vorjahr und das Speicherpotenzial am Ende
+  getrennt ausgewiesen.
+- Längste Dunkelflaute (Z1) über {c.MAX_STORAGE_DAYS} Tage: Langzeit-Wärmespeicherung nicht sinnvoll, keine Berechnung.
 
 **Mobilität**
 - Elektro-PKW: 12 500 km/Jahr × 18 kWh/100 km ≈ 2 250 kWh/Fahrzeug/Jahr → 40 Mio. PKW ≈ 90 TWh

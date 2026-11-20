@@ -117,7 +117,8 @@ def describe_run(p: model.Params, start: date, end: date, location: str,
     if p.electrolysis_gw > 0:
         extras.append(f"Elektrolyse {gn(p.electrolysis_gw)} GW")
     if p.storage_share > 0:
-        extras.append(f"LZ-Wärmespeicher {p.storage_share * 100:.0f} %")
+        extras.append(f"LZ-Wärmespeicher {p.storage_share * 100:.0f} %, {p.storage_days} Tage, "
+                      f"Verlust {gn(p.storage_loss * 100)} %/Tag" + ("" if p.storage_cyclic else ", linear"))
     return (f"{start:%d.%m.%Y}–{end:%d.%m.%Y} | {gen}<br>"
             f"PKW {gn(ev, 0)} | LKW {gn(lkw)} | WW {gn(dhw, 0)} | Heiz. {gn(heat, 0)} Mio | "
             f"WP Luft/Sole {p.share_air_hp * 100:.0f}/{p.share_water_hp * 100:.0f} % | "
@@ -150,13 +151,26 @@ def render_storage_balance(r: storage.StorageResult, s0: dict) -> None:
          "weniger Überschuss für die Elektrolyse (Z1 − Z0)"),
         ("Mehrverbrauch Speicherlösung gesamt",
          f"{t(k['total_z2'] - k['total_z0'])} TWh ({pct(k['total_z2'] - k['total_z0'], k['total_z0'])})",
-         "Netzverbrauch Z2 − Z0 = Mehrbedarf + Änderung Elektrolyse + Verluste − Inhalt aus Vorjahr"),
+         "Netzverbrauch mit − ohne Speicher = Mehrbedarf + Änderung Elektrolyse + Verluste"
+         + ("" if k["cyclic"] else " − Inhalt aus Vorjahr")),
         ("Nicht deckbarer Wärmebedarf", f"{t(k['uncovered'])} TWh",
          "kein Überschuss innerhalb der Speicherdauer bzw. über der Entladegrenze; bleibt Residuallast"),
-        ("Speicherinhalt aus Vorjahr", f"{t(k['prev_year'])} TWh", "notwendige Befüllung zu Beginn"),
-        ("Speicherpotenzial am Ende", f"{t(k['potential_end'])} TWh", "mögliche Befüllung für künftigen Bedarf"),
-        ("Jahr aus eigenem Überschuss deckbar", "ja" if k["self_sufficient"] else "nein",
-         "Potenzial am Ende ≥ Inhalt aus Vorjahr"),
+    ]
+    if k["cyclic"]:
+        rows += [
+            ("Rechenweise", "stationäres Jahr", "Defizite am Zeitraumbeginn aus Überschüssen am Zeitraumende"),
+            ("Speicherinhalt am Jahreswechsel", f"{t(k['soc_start'])} TWh",
+             "stationär: Inhalt zu Beginn = Inhalt am Ende"),
+        ]
+    else:
+        rows += [
+            ("Rechenweise", "linear", "Inhalt aus Vorjahr und Potenzial am Ende getrennt ausgewiesen"),
+            ("Speicherinhalt aus Vorjahr", f"{t(k['prev_year'])} TWh", "notwendige Befüllung zu Beginn"),
+            ("Speicherpotenzial am Ende", f"{t(k['potential_end'])} TWh", "mögliche Befüllung für künftigen Bedarf"),
+            ("Jahr aus eigenem Überschuss deckbar", "ja" if k["self_sufficient"] else "nein",
+             "Potenzial am Ende ≥ Inhalt aus Vorjahr"),
+        ]
+    rows += [
         ("Max. Speicherinhalt",
          f"{t(k['soc_max'])} TWh ({gn(k['soc_max'] / k['n_s'], 0) if k['n_s'] else '–'} kWh je Speicher-EW, "
          f"{k['soc_max_date']:%d.%m.%Y})", "Maximum des Speicherinhalts am Tagesende"),
@@ -170,8 +184,8 @@ def render_storage_balance(r: storage.StorageResult, s0: dict) -> None:
          "Ø energiegewichtet über alle Einspeicherungen"),
     ]
     st.dataframe(pd.DataFrame(rows, columns=["Kennzahl", "Wert", "Erläuterung"]), width="stretch", hide_index=True)
-    st.caption(f"Kontrolle: Vorjahr + IN − Verluste − OUT = "
-               f"{gn((k['prev_year'] + k['in'] - k['loss'] - out_sum) / 1000.0, 3)} TWh (Soll 0).")
+    st.caption(f"Kontrolle: Inhalt zu Beginn + IN − Verluste − OUT − Inhalt am Ende = "
+               f"{gn((k['soc_start'] + k['in'] - k['loss'] - out_sum - k['soc_end']) / 1000.0, 3)} TWh (Soll 0).")
 
     # Vorschau Vergleich der Zustände (in Stufe 4 in Jahresbilanz und Grafiken integriert)
     s1, s2 = r.summary_z1, r.summary_z2
@@ -186,8 +200,8 @@ def render_storage_balance(r: storage.StorageResult, s0: dict) -> None:
                   str(longest(sx, "deficit_periods")), str(sx["deficit_days"]), str(longest(sx, "surplus_periods"))]
            for name, sx in (("Z0 Referenz (WP)", s0), ("Z1 direktelektrisch", s1), ("Z2 mit Speicher", s2))},
     })
-    st.markdown("**Vergleich der Rechenzustände** (Vorschau; Jahresbilanz und Grafiken zeigen in Stufe 3 "
-                "noch Z0)")
+    st.markdown("**Vergleich der Rechenzustände** – Z0: ohne Speicher (Wärmepumpen-Mix), Z1: Speicher-Haushalte "
+                "direktelektrisch ohne Verschiebung, Z2: mit Speicher (Hauptergebnis)")
     st.dataframe(comp, width="stretch", hide_index=True)
 
 
@@ -344,8 +358,13 @@ if st_share > 0:
     st_tdesign = sb.slider("Auslegungstemperatur (°C)", -20, 5, sd["design_temp"], 1,
                            help="Bis zu dieser Tagesmitteltemperatur deckt der Speicher die volle Heizlast; "
                                 "an kälteren Tagen kommt der Rest aus dem Netz.")
+    st_cyclic = sb.checkbox("Speicher als stationäres Jahr rechnen", value=True,
+                            help="Wie bei den Dunkelflauten: Defizite am Zeitraumbeginn werden aus Überschüssen am "
+                                 "Zeitraumende gedeckt (Speicherinhalt Beginn = Ende). Aus: Inhalt aus Vorjahr und "
+                                 "Speicherpotenzial am Ende werden getrennt ausgewiesen.")
 else:
     st_loss, st_days, st_tdesign = float(sd["loss_pct"]), sd["days"], sd["design_temp"]
+    st_cyclic = True
 
 add_ev = max(0.0, float(mio_ev) - config.CURRENT_EV)
 add_lkw = max(0.0, round(float(mio_lkw) - config.CURRENT_LKW, 1))
@@ -381,17 +400,21 @@ params = model.Params(
     co2_specific=float(co2_specific), hgt_reference=hgt_ref,
     electrolysis_gw=float(electrolysis_gw),
     storage_share=st_share / 100.0, storage_loss=st_loss / 100.0, storage_days=int(st_days),
-    design_temp=float(st_tdesign),
+    design_temp=float(st_tdesign), storage_cyclic=bool(st_cyclic),
 )
 holiday_dates = frozenset(holidays.Germany(years=range(start_date.year, end_date.year + 1)).keys())
 try:
-    df, S, ST = run_model(raw, inst_daily, temps, holiday_dates, params)
+    df0, S0, ST = run_model(raw, inst_daily, temps, holiday_dates, params)
 except KeyError as e:
     st.error(f"{e} Verfügbare Serien: {', '.join(c for c in raw.columns if c not in ('date', 'coverage'))}")
     st.stop()
 
 for n in notes:
     st.warning(n)
+
+# Hauptausgabe: mit Speicher (Z2), sofern aktiv; sonst Referenz (Z0)
+storage_on = ST.active
+df, S = (ST.z2, ST.summary_z2) if storage_on else (df0, S0)
 
 # ---------------------------------------------------------------------------
 # Grafik
@@ -406,10 +429,19 @@ else:
                f"{status_quo['solar']:.0f} GWp Solar, {status_quo['wind_onshore'] + status_quo['wind_offshore']:.0f} GW Wind)")
 subtitle = (f"{gen_txt}<br>Gesamt-Last aus Basis-Last, e-PKW ({mio_ev:.1f} Mio.), e-LKW ({mio_lkw:.1f} Mio.), "
             f"e-Warmwasser ({mio_dhw:.0f} Mio. EW), e-Heizung ({mio_heat:.0f} Mio. EW)"
-            + (f", Elektrolyse ({gn(electrolysis_gw)} GW)" if electrolysis_gw > 0 else ""))
+            + (f", Elektrolyse ({gn(electrolysis_gw)} GW)" if electrolysis_gw > 0 else "")
+            + (f", Langzeit-Wärmespeicher ({st_share} %, {gn(ST.kpi['n_s'])} Mio. EW)" if storage_on else ""))
 fig = charts.build_figure(df, start_date, end_date,
                           f"Tagesbilanz von Stromerzeugung und Verbrauch in Deutschland  {period_str}", subtitle)
 st.plotly_chart(fig, width="stretch")
+if storage_on:
+    st.caption("Speicher OUT (heller, ganz oben): Wärmebedarf, der aus dem Langzeit-Wärmespeicher gedeckt wird "
+               "(kein Netzbezug). Speicher IN: eingespeicherter Überschuss. Hover: Netzlast = Netzbezug.")
+
+if df["temp_mean"].notna().any():
+    st.subheader("Temperatur und Langzeit-Wärmespeicher" if storage_on else f"Tagesmitteltemperatur ({location})")
+    st.plotly_chart(charts.build_temperature_storage(df, start_date, end_date,
+                                                     float(st_tdesign) if storage_on else None), width="stretch")
 
 # ---------------------------------------------------------------------------
 # Geordnete Jahresdauerlinie mit Vergleich zum vorhergehenden Berechnungslauf
@@ -426,7 +458,8 @@ if stored is None or stored["signature"] != run_signature:
     st.session_state["dl_current"] = current_run
 previous_run = st.session_state.get("dl_previous")
 
-st.plotly_chart(charts.build_duration_curve(current_run, previous_run), width="stretch")
+st.plotly_chart(charts.build_duration_curve(current_run, previous_run,
+                                            model.duration_curve(df0) if storage_on else None), width="stretch")
 col_dl1, col_dl2 = st.columns([4, 1])
 col_dl1.caption("Mittlere Tagesleistung = Tagesenergie / 24 h, absteigend sortiert. Positive Werte: Residuallast "
                 "(EE-Defizit), negative Werte: Superpower (EE-Überschuss). Verglichen wird mit dem vorhergehenden "
@@ -439,19 +472,47 @@ if previous_run is not None and col_dl2.button("Vergleich zurücksetzen"):
 # Jahresbilanz
 # ---------------------------------------------------------------------------
 st.subheader("Jahresbilanz")
-s = S["sums_gwh"]
-twh = {k: v / 1000.0 for k, v in s.items()}
-co2c = S["co2_by_category"]
-summary = pd.DataFrame({
-    "Erzeugung": ["Solar", "Wind Onshore", "Wind Offshore", "Sonstige EE", "", "Summe EE", "Residualerzeugung"],
-    "Wert [TWh]": [gn(twh[k]) if k else "" for k in ("solar_scaled", "wind_onshore_scaled", "wind_offshore_scaled",
-                                                     "other_ee", None, "ee_day", "residual_day")],
-    "(Mehr-) Verbrauch": ["Basis-Last", "Mobilität", "Warmwasser", "Heizung", "Elektrolyse",
-                          "Summe Verbrauch", "Superpower"],
-    "Wert [TWh] ": [gn(twh[k]) for k in (*model.LOAD_COLS, "total_load_gwh", "superpower_day")],
-    "CO₂ [g/kWh]": [gn(co2c[k], 0) for k in model.LOAD_COLS] + [gn(S["co2_mean"], 0), "0"],
-})
+
+
+def both(key: str, decimals: int = 1, scale: float = 1000.0, src: str = "sums_gwh") -> str:
+    """Wert mit Speicher; abweichender Wert ohne Speicher (Z0) in Klammern."""
+    get = (lambda sx: sx[src][key]) if src else (lambda sx: sx[key])
+    a = gn(get(S) / scale, decimals)
+    if not storage_on:
+        return a
+    b = gn(get(S0) / scale, decimals) if key in (S0[src] if src else S0) else "–"
+    return a if a == b else f"{a} ({b})"
+
+
+gen_rows = [("Solar", "solar_scaled"), ("Wind Onshore", "wind_onshore_scaled"),
+            ("Wind Offshore", "wind_offshore_scaled"), ("Sonstige EE", "other_ee")]
+load_rows = [("Basis-Last", "base_load_gwh"), ("Mobilität", "mobility_gwh"), ("Warmwasser", "dhw_gwh"),
+             ("Heizung", "heating_gwh"), ("Elektrolyse", "electrolysis_gwh")]
+if storage_on:
+    load_rows.append(("Speicher IN", "storage_in_gwh"))
+extra_rows = 1 if storage_on else 0          # Zeile „davon Mehrbedarf …“
+n_fill = len(load_rows) + extra_rows - len(gen_rows)
+left = [n for n, _ in gen_rows] + [""] * n_fill + ["Summe EE", "Residualerzeugung"]
+left_v = [both(k) for _, k in gen_rows] + [""] * n_fill + [both("ee_day"), both("residual_day")]
+right = [n for n, _ in load_rows]
+right_v = [both(k) if k in S0["sums_gwh"] or not storage_on else gn(S["sums_gwh"][k] / 1000.0)
+           for _, k in load_rows]
+co2_v = [both(k, 0, 1.0, "co2_by_category") if k in S0["co2_by_category"] or not storage_on
+         else gn(S["co2_by_category"][k], 0) for _, k in load_rows]
+if storage_on:
+    right.append("davon Mehrbedarf direktelektrische Wärmespeicherung (nachrichtlich, nicht addiert)")
+    right_v.append(gn((ST.kpi["extra_heat"] + ST.kpi["extra_dhw"]) / 1000.0))
+    co2_v.append("–")
+right += ["Summe Verbrauch", "Superpower"]
+right_v += [both("total_load_gwh"), both("superpower_day")]
+co2_v += [both("co2_mean", 0, 1.0, None), "0"]
+summary = pd.DataFrame({"Erzeugung": left, "Wert [TWh]": left_v, "(Mehr-) Verbrauch": right,
+                        "Wert [TWh] ": right_v, "CO₂ [g/kWh]": co2_v})
 st.dataframe(summary, width="stretch", hide_index=True)
+if storage_on:
+    st.caption("Werte mit Langzeit-Wärmespeicher; in Klammern abweichende Werte ohne Speicher (Referenz: "
+               "Speicher-Haushalte mit Wärmepumpen-Mix). Warmwasser und Heizung zeigen den Netzbezug. "
+               "Der Verbrauch steigt durch die direktelektrische Beladung (statt Wärmepumpen) und die Speicherverluste.")
 if electrolysis_gw > 0:
     elyse_gwh = S["sums_gwh"]["electrolysis_gwh"]
     st.caption(f"Elektrolyse (nachrichtlich): {gn(elyse_gwh / 1000)} TWh, "
@@ -459,25 +520,35 @@ if electrolysis_gw > 0:
                f"(Energie ÷ Leistung; Maximum {gn(len(df) * 24, 0)} h)")
 
 if st_share > 0:
-    render_storage_balance(ST, S)
+    render_storage_balance(ST, S0)
 
-sp_gw, sp_date = S["peak_superpower"]
-res_gw, res_date = S["peak_residual"]
-longest_sp = S["surplus_periods"][0] if S["surplus_periods"] else None
-longest_df = S["deficit_periods"][0] if S["deficit_periods"] else None
+def period_line(sx: dict, kind: str) -> str:
+    if kind == "sp":
+        gw, dt = sx["peak_superpower"]
+        p, days = (sx["surplus_periods"][0] if sx["surplus_periods"] else None), sx["surplus_days"]
+    else:
+        gw, dt = sx["peak_residual"]
+        p, days = (sx["deficit_periods"][0] if sx["deficit_periods"] else None), sx["deficit_days"]
+    return (f"{fmt_period(p)} / {days} Tage / {gn(gw)} GW ({dt:%d.%m.%Y})" if dt is not None
+            else f"{fmt_period(p)} / 0 Tage / –")
+
+
+prefix = "mit Speicher: " if storage_on else ""
 result_line("Längste Superpower / Tage mit Superpower / Ø-Leistung am Tag mit größtem Überschuss",
-            f"{fmt_period(longest_sp)} / {S['surplus_days']} Tage / {gn(sp_gw)} GW ({sp_date:%d.%m.%Y})"
-            if sp_date is not None else f"{fmt_period(longest_sp)} / 0 Tage / –")
+            prefix + period_line(S, "sp"), note=("ohne Speicher: " + period_line(S0, "sp")) if storage_on else None)
 result_line("Längste Dunkelflaute / Tage mit EE-Defizit / Ø-Residualleistung am Tag mit größtem Defizit",
-            f"{fmt_period(longest_df)} / {S['deficit_days']} Tage / {gn(res_gw)} GW ({res_date:%d.%m.%Y})"
-            if res_date is not None else f"{fmt_period(longest_df)} / 0 Tage / –")
+            prefix + period_line(S, "df"), note=("ohne Speicher: " + period_line(S0, "df")) if storage_on else None)
 
-if S["deficit_periods"]:
-    st.subheader("Top-10 Dunkelflauten")
+S_top = S
+if storage_on:
+    choice = st.radio("Top-10 Dunkelflauten", ["mit Speicher", "ohne Speicher"], horizontal=True)
+    S_top = S if choice == "mit Speicher" else S0
+if S_top["deficit_periods"]:
+    st.subheader("Top-10 Dunkelflauten" + ((" – " + choice) if storage_on else ""))
     top = pd.DataFrame([{
         "Nr": i, "Start": f"{p.start:%d.%m.%Y}", "Ende": f"{p.end:%d.%m.%Y}", "Dauer [Tage]": p.days,
         "Gesamtdefizit [TWh]": gn(p.energy_twh), "Jahresnaht": "↻" if p.wraps else "",
-    } for i, p in enumerate(S["deficit_periods"][:10], 1)])
+    } for i, p in enumerate(S_top["deficit_periods"][:10], 1)])
     st.dataframe(top, width="stretch", hide_index=True, column_config={
         "Nr": st.column_config.NumberColumn(width="small"),
         "Jahresnaht": st.column_config.TextColumn(width="small",
@@ -487,7 +558,8 @@ if S["deficit_periods"]:
 st.caption(texts.DUNKELFLAUTE_DEFINITION)
 
 c1, c2, c3 = st.columns(3)
-result_line("EE-Anteil am Verbrauch", gn(S["ee_share"] * 100) + " %", target=c1)
+result_line("EE-Anteil am Verbrauch", gn(S["ee_share"] * 100) + " %", target=c1,
+            note=f"ohne Speicher: {gn(S0['ee_share'] * 100)} %" if storage_on else None)
 result_line(f"Ø Temperatur ({location})",
             gn(S["avg_temp"]) + " °C" if S["avg_temp"] is not None else "n/a", target=c2)
 result_line("Heizgradtage (15 °C)", gn(S["hgt"], 0) if S["hgt"] is not None else "n/a",
@@ -531,7 +603,7 @@ with st.expander("Debug: Datenbasis und tägliche Differenz EE – Verbrauch", e
         st_df = ST.z2[["date", *st_cols]].copy()
         st_df["date"] = st_df["date"].dt.strftime("%d.%m.%Y")
         st.dataframe(st_df, width="stretch", hide_index=True)
-        export_df = df.merge(ST.z2[["date", *st_cols]], on="date", how="left")
+        export_df = df
     st.download_button("Alle Tageswerte als CSV",
                        export_df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
                        file_name=f"energiewende_{start_date}_{end_date}.csv", mime="text/csv")

@@ -30,7 +30,7 @@ def offline(monkeypatch):
 def test_app_laeuft_und_schalter_wirken():
     at = AppTest.from_file(APP, default_timeout=60).run()
     assert not at.exception, at.exception
-    assert len(at.get("plotly_chart")) == 2
+    assert len(at.get("plotly_chart")) == 3
     first = at.dataframe[0].value.copy()
 
     at.sidebar.checkbox[1].check().run()          # Monatliche Skalierung aus
@@ -59,7 +59,7 @@ def test_fehlschlag_wird_nicht_gecacht(monkeypatch):
     assert any("Keine Energiedaten" in e.value for e in at.error)
     state["ok"] = True
     at.run()
-    assert not at.error and len(at.get("plotly_chart")) == 2
+    assert not at.error and len(at.get("plotly_chart")) == 3
 
 
 def test_heizung_eingabe_ohne_netzabruf(monkeypatch, tmp_path):
@@ -78,12 +78,12 @@ def test_heizung_eingabe_ohne_netzabruf(monkeypatch, tmp_path):
         ni = next(n for n in at.sidebar.number_input if label in n.label)
         ni.set_value(80).run()
         assert not at.exception, at.exception
-    assert len(at.get("plotly_chart")) == 2
+    assert len(at.get("plotly_chart")) == 3
 
 
 def _dl_traces(at):
     import json
-    fig = json.loads(at.get("plotly_chart")[1].proto.spec)
+    fig = json.loads(at.get("plotly_chart")[2].proto.spec)
     return [t["name"] for t in fig["data"] if t.get("showlegend", True)]
 
 
@@ -118,7 +118,7 @@ def test_sektorszenarien_und_dauerlinien_vergleich():
 def test_dauerlinie_stundenachse():
     import json
     at = AppTest.from_file(APP, default_timeout=60).run()
-    fig = json.loads(at.get("plotly_chart")[1].proto.spec)
+    fig = json.loads(at.get("plotly_chart")[2].proto.spec)
     n = fig["layout"]["xaxis"]["range"][1]
     assert fig["layout"]["xaxis2"]["range"] == [24, 24 * n]
     assert fig["layout"]["xaxis2"]["overlaying"] == "x" and fig["layout"]["xaxis2"]["side"] == "top"
@@ -132,7 +132,7 @@ def test_stufe1_hover_achse_kennzahlen():
     main = json.loads(at.get("plotly_chart")[0].proto.spec)
     seg = next(t for t in main["data"] if t["name"] == "Basis-Last")
     assert "customdata" in seg and "%{customdata" in seg["hovertemplate"]
-    dl = json.loads(at.get("plotly_chart")[1].proto.spec)
+    dl = json.loads(at.get("plotly_chart")[2].proto.spec)
     assert dl["layout"]["yaxis"]["title"]["text"].startswith("Superpower (−) bzw. Residuallast (+)")
     assert not at.metric                              # Kennzahlen jetzt als Ergebniszeilen
     md = " ".join(m.value for m in at.markdown)
@@ -171,7 +171,13 @@ def test_stufe3_speicherbilanz():
     labels = [s.label for s in at.sidebar.slider]
     assert any(l.startswith("Speicherverlust") for l in labels) and any(l.startswith("Auslegungstemperatur") for l in labels)
     assert next(s for s in at.sidebar.slider if s.label.startswith("Auslegungstemperatur")).value == -7
-    assert at.dataframe[0].value.equals(ref)                 # Stufe 3: Jahresbilanz zeigt weiter Z0
+    tab = at.dataframe[0].value                               # Stufe 4: mit Speicher, Referenz in Klammern
+    i_sum = tab["(Mehr-) Verbrauch"].tolist().index("Summe Verbrauch")
+    ref_sum = ref.loc[ref["(Mehr-) Verbrauch"] == "Summe Verbrauch", "Wert [TWh] "].item()
+    assert tab["Wert [TWh] "].iloc[i_sum].endswith(f"({ref_sum})")
+    assert "Speicher IN" in tab["(Mehr-) Verbrauch"].tolist()
+    assert tab["Erzeugung"].tolist()[-2:] == ["Summe EE", "Residualerzeugung"]
+    assert len(at.get("plotly_chart")) == 3
     assert any("Speicherbilanz" in h.value for h in at.subheader)
     kpi = at.dataframe[1].value
     assert "Speicher IN" in kpi["Kennzahl"].tolist() and "Mehrverbrauch Speicherlösung gesamt" in kpi["Kennzahl"].tolist()
@@ -185,3 +191,35 @@ def test_stufe3_speicherbilanz():
     assert any("Warmwasser-Eingabe zu klein" in w.value for w in at.sidebar.warning)
     assert any("mindestens" in i.value for i in at.info)
     assert before is not None
+
+
+def test_stufe4_darstellung_mit_ohne_speicher():
+    import json
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario").set_value(
+        "Agora Energiewende: Klimaneutrales Deutschland 2045").run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Szenario 2045").run()
+    next(s for s in at.sidebar.slider if s.label.startswith("Anteil Langzeit")).set_value(50).run()
+    assert not at.exception, at.exception
+    charts_ = [json.loads(c.proto.spec) for c in at.get("plotly_chart")]
+    main_names = [t.get("name") for t in charts_[0]["data"]]
+    assert {"Speicher IN", "Speicher OUT (WW) – kein Netzbezug", "Speicher OUT (Heiz) – kein Netzbezug"} <= set(main_names)
+    temp_names = [t.get("name") for t in charts_[1]["data"]]
+    assert {"Tagesmitteltemperatur", "Speicher IN", "Speicherinhalt"} <= set(temp_names)
+    assert "Aktuell ohne Speicher (Referenz)" in [t.get("name") for t in charts_[2]["data"]]
+    # mit/ohne bei längster Dunkelflaute, Auswahl Top-10
+    md = " ".join(m.value for m in at.markdown)
+    assert "mit Speicher:" in md and "ohne Speicher:" in md
+    top_radio = next(r for r in at.radio if r.label == "Top-10 Dunkelflauten")
+    top10 = lambda: next(d.value for d in at.dataframe if "Gesamtdefizit [TWh]" in d.value.columns)  # noqa: E731
+    top_mit = top10().copy()
+    top_radio.set_value("ohne Speicher").run()
+    assert not top10().equals(top_mit)
+    # stationäres Jahr (Standard) und linear
+    kpi = at.dataframe[1].value.set_index("Kennzahl")["Wert"]
+    assert kpi["Rechenweise"] == "stationäres Jahr" and "Speicherinhalt am Jahreswechsel" in kpi.index
+    ctrl = next(c.value for c in at.caption if c.value.startswith("Kontrolle"))
+    assert "0,000" in ctrl
+    next(c for c in at.sidebar.checkbox if c.label.startswith("Speicher als stationäres Jahr")).uncheck().run()
+    kpi = at.dataframe[1].value.set_index("Kennzahl")["Wert"]
+    assert kpi["Rechenweise"] == "linear" and "Speicherinhalt aus Vorjahr" in kpi.index

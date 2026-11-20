@@ -42,6 +42,7 @@ class Params:
     storage_loss: float = 0.0           # Verlust je Tag, Anteil des Speicherinhalts
     storage_days: int = 30              # max. Speicherdauer
     design_temp: float = -7.0           # Auslegungstemperatur °C
+    storage_cyclic: bool = True         # Speicher als stationäres Jahr (wie Dunkelflauten)
 
     @property
     def share_direct(self) -> float:

@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from .model import Params, _apply_balance, _finish_balance, german_number as gn, periods, summarize
+from .model import Params, _apply_balance, _finish_balance, find_runs, german_number as gn, periods, summarize
 
 EPS = 1e-9
 
@@ -38,31 +38,50 @@ class Dispatch:
     prev_year: float            # notwendiger Inhalt am Ende des Vortags von Tag 1
     potential_end: float        # mögliche Befüllung am Zeitraumende (nur ausgewiesen)
     durations: list = field(default_factory=list)   # (Tage, eingespeicherte Energie)
+    start_content: float = 0.0  # stationäres Jahr: Inhalt am Jahreswechsel (Beginn = Ende)
 
 
-def dispatch(residual, surplus, ww_s, h_s, cap_out, cap_in, loss: float, max_days: int) -> Dispatch:
+def dispatch(residual, surplus, ww_s, h_s, cap_out, cap_in, loss: float, max_days: int,
+             cyclic: bool = False) -> Dispatch:
     """Rückwärtsverfahren (Auftrag Teil C2, Schritte 3–5).
 
     residual, surplus: Residuallast bzw. Überschuss nach Elektrolyse im Zustand Z1.
     ww_s, h_s: speicherfähiger Tagesbedarf Warmwasser bzw. Heizung (direktelektrisch).
     cap_out: Entladegrenze je Tag; cap_in: Ladegrenze je Tag. loss: Verlust je Tag (Anteil des Inhalts).
+    cyclic: stationäres Jahr – die Rückwärtssuche darf über den Zeitraumbeginn hinaus auf die
+    Überschüsse am Zeitraumende zugreifen; es gibt dann weder Inhalt aus dem Vorjahr noch Potenzial.
     """
     R = np.asarray(residual, float)
-    U = np.array(surplus, float)
-    WW = np.asarray(ww_s, float)
-    H = np.asarray(h_s, float)
-    cap_out = np.broadcast_to(np.asarray(cap_out, float), R.shape)
-    cap_in = np.broadcast_to(np.asarray(cap_in, float), R.shape)
-    n, D, keep = len(R), int(max_days), 1.0 - float(loss)
-    IN, OW, OH, unc = (np.zeros(n) for _ in range(4))
-    prev_year, potential, durations = 0.0, 0.0, []
+    n = len(R)
+    arrays = [R, np.array(surplus, float), np.asarray(ww_s, float), np.asarray(h_s, float),
+              np.array(np.broadcast_to(np.asarray(cap_out, float), R.shape)),
+              np.array(np.broadcast_to(np.asarray(cap_in, float), R.shape))]
+    shift = 0
+    if cyclic and n:
+        # Jahr so drehen, dass es mit der längsten Überschussperiode beginnt (Speicher dort typisch leer)
+        runs = find_runs(arrays[1] > EPS, cyclic=True)
+        if runs:
+            shift = max(runs, key=lambda r: r[1])[0]
+        arrays = [np.roll(a, -shift) for a in arrays]
+    d = _dispatch_core(*arrays, float(loss), int(max_days), cyclic)
+    if shift:
+        for name in ("storage_in", "out_dhw", "out_heat", "uncovered", "soc", "loss", "surplus_left"):
+            setattr(d, name, np.roll(getattr(d, name), shift))
+    return d
 
-    # 3. Endphase: Überschuss nach dem letzten Defizittag → nur Speicherpotenzial
+
+def _dispatch_core(R, U, WW, H, cap_out, cap_in, loss, D, cyclic) -> Dispatch:
+    n, keep = len(R), 1.0 - loss
+    IN, OW, OH, unc = (np.zeros(n) for _ in range(4))
+    prev_year, potential, start_content, durations = 0.0, 0.0, 0.0, []
+
     i = n - 1
-    while i >= 0 and R[i] <= EPS:
-        if U[i] > EPS and (n - 1 - i) < D:
-            potential += min(U[i], cap_in[i]) * keep ** (n - 1 - i)
-        i -= 1
+    if not cyclic:
+        # 3. Endphase: Überschuss nach dem letzten Defizittag → nur Speicherpotenzial
+        while i >= 0 and R[i] <= EPS:
+            if U[i] > EPS and (n - 1 - i) < D:
+                potential += min(U[i], cap_in[i]) * keep ** (n - 1 - i)
+            i -= 1
 
     # 4. Ausspeichern rückwärts, jeweils Einspeichern im nächstgelegenen früheren Überschuss
     while i >= 0:
@@ -74,17 +93,20 @@ def dispatch(residual, surplus, ww_s, h_s, cap_out, cap_in, loss: float, max_day
             for k in range(1, D + 1):
                 B /= keep
                 c = i - k
-                if c < 0:                                   # vor Zeitraumbeginn → aus Vorjahr
+                if c < 0 and not cyclic:                    # vor Zeitraumbeginn → aus Vorjahr
                     prev_year += B
                     durations.append((k, B))
                     B = 0.0
                     break
+                c %= n                                      # stationäres Jahr: Zeitraumende
                 x = min(B, U[c], cap_in[c] - IN[c])
                 if x > EPS:
                     IN[c] += x
                     U[c] -= x
                     B -= x
                     durations.append((k, x))
+                    if i - k < 0:                           # Paket liegt über den Jahreswechsel im Speicher
+                        start_content += x * keep ** (n - 1 - c)
                 if B <= EPS:
                     B = 0.0
                     break
@@ -97,14 +119,14 @@ def dispatch(residual, surplus, ww_s, h_s, cap_out, cap_in, loss: float, max_day
             unc[i] = demand - ow - oh
         i -= 1
 
-    # 5. Speicherinhalt vorwärts
+    # 5. Speicherinhalt vorwärts (Start: Inhalt aus Vorjahr bzw. stationärer Inhalt am Jahreswechsel)
     soc, lossd = np.zeros(n), np.zeros(n)
-    s = prev_year
+    s = prev_year + start_content
     for d in range(n):
         lossd[d] = s * (1.0 - keep)
         s = s - lossd[d] + IN[d] - OW[d] - OH[d]
         soc[d] = s
-    return Dispatch(IN, OW, OH, unc, soc, lossd, U, prev_year, potential, durations)
+    return Dispatch(IN, OW, OH, unc, soc, lossd, U, prev_year, potential, durations, start_content)
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +198,7 @@ def compute_storage(df0: pd.DataFrame, p: Params) -> StorageResult:
         notes.append("Ohne Temperaturdaten keine Lade-/Entladegrenzen.")
 
     disp = dispatch(z1["residual_day"], z1["superpower_day"], ww_s, h_s, cap_out, cap_in,
-                    p.storage_loss, p.storage_days)
+                    p.storage_loss, p.storage_days, cyclic=p.storage_cyclic)
 
     # --- Z2: mit Speicher
     z2 = z1.copy()
@@ -213,6 +235,8 @@ def compute_storage(df0: pd.DataFrame, p: Params) -> StorageResult:
         "soc_max": float(disp.soc.max()) if len(disp.soc) else 0.0,
         "soc_max_date": df0["date"].iloc[i_max] if len(df0) else None,
         "soc_end": float(disp.soc[-1]) if len(disp.soc) else 0.0,
+        "soc_start": (float(disp.soc[-1]) if p.storage_cyclic else disp.prev_year) if len(disp.soc) else 0.0,
+        "cyclic": bool(p.storage_cyclic),
         "q_design": q_design, "q_charge": q_charge,
         "p_design_gw": float(np.max(cap_out)) / 24.0 if temps_ok else float("nan"),
         "p_in_max_gw": float(disp.storage_in.max()) / 24.0, "p_in_cap_gw": float(cap_in[0]) / 24.0,

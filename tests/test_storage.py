@@ -56,7 +56,7 @@ def _z0(p):
     return model.compute_daily(raw, inst, synthetic_temps(), frozenset(), p)
 
 
-BASE = model.Params(target_solar=400, target_wind_onshore=180, target_wind_offshore=70,
+BASE = model.Params(target_solar=400, target_wind_onshore=180, target_wind_offshore=70, storage_cyclic=False,
                     add_heating_mio=30, add_dhw_mio=30, share_air_hp=0.5, share_water_hp=0.2,
                     hgt_reference=2300, storage_share=0.5, storage_days=60)
 
@@ -114,3 +114,33 @@ def test_dunkelflaute_pruefung():
     p = replace(BASE, target_solar=50, target_wind_onshore=20, target_wind_offshore=5)
     r = compute_storage(_z0(p), p)
     assert not r.active and "nicht sinnvoll" in r.notes[0]
+
+
+# --- Stationäres Jahr -------------------------------------------------------
+def test_dispatch_zyklisch_handbeispiel():
+    # Defizit an Tag 0, Überschuss nur an Tag 3 (Zeitraumende) → zyklisch über den Jahreswechsel
+    d = dispatch(residual=[4, 0, 0, 0], surplus=[0, 0, 0, 10], ww_s=[1] * 4, h_s=[3] * 4,
+                 cap_out=INF, cap_in=INF, loss=0.5, max_days=3, cyclic=True)
+    assert d.prev_year == 0 and d.potential_end == 0
+    assert d.storage_in.tolist() == pytest.approx([0, 0, 0, 8])     # 4 / 0,5 (ein Verlusttag)
+    assert d.out_dhw[0] + d.out_heat[0] == pytest.approx(4)
+    assert d.soc.tolist() == pytest.approx([0, 0, 0, 8])            # Ende = Beginn: 8
+    linear = dispatch(residual=[4, 0, 0, 0], surplus=[0, 0, 0, 10], ww_s=[1] * 4, h_s=[3] * 4,
+                      cap_out=INF, cap_in=INF, loss=0.5, max_days=3, cyclic=False)
+    assert linear.prev_year == pytest.approx(8) and linear.storage_in.sum() == 0
+
+
+@pytest.mark.parametrize("loss", [0.0, 0.01])
+def test_zyklisch_bilanz_geschlossen(loss):
+    p = replace(BASE, storage_loss=loss, storage_cyclic=True)
+    r = compute_storage(_z0(p), p)
+    z2, k = r.z2, r.kpi
+    out = (z2["storage_out_dhw_gwh"] + z2["storage_out_heat_gwh"]).sum()
+    assert k["prev_year"] == 0 and k["potential_end"] == 0
+    assert k["in"] - k["loss"] - out == pytest.approx(0, abs=1e-6)       # stationär: Beginn = Ende
+    assert z2["storage_soc_gwh"].min() >= -1e-6
+    assert k["soc_start"] == pytest.approx(z2["storage_soc_gwh"].iloc[-1])
+    assert k["dur_max"] <= p.storage_days
+    # Mehrverbrauch vollständig sichtbar: Z2 − Z0 = Mehrbedarf + Elektrolyse-Änderung + Verluste
+    assert k["total_z2"] - k["total_z0"] == pytest.approx(
+        k["extra_heat"] + k["extra_dhw"] + k["elyse_change"] + k["loss"], abs=1e-6)
