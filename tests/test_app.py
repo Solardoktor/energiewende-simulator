@@ -180,7 +180,13 @@ def test_stufe3_speicherbilanz():
     assert len(at.get("plotly_chart")) == 3
     assert any("Speicherbilanz" in h.value for h in at.subheader)
     kpi = at.dataframe[1].value
-    assert "Ladestrom für Langzeit-Wärmespeicher aus Superpower" in kpi["Kennzahl"].tolist()
+    assert kpi["Kennzahl"].tolist() == [
+        "Einwohner, die mit Langzeit-Wärmespeichern versorgt werden", "Speicherentladung für Warmwasser + Heizung",
+        "Ladeenergie für Langzeit-Wärmespeicher aus Superpower",
+        "Mehrbedarf direktelektrische Speicherheizung für Warmwasser + Heizung", "Speicherverluste",
+        "Mehrverbrauch Langzeitspeicher gesamt", "Max. Speicherinhalt", "Speicherdauer und Zyklenzahl",
+        "Speicherkapazität", "Bemessungsleistung", "Ladeleistung", "Entladeleistung", "Nicht deckbarer Wärmebedarf",
+        "Rechenweise", "Speicherinhalt am Jahreswechsel"]
     assert "Mehrverbrauch Langzeitspeicher gesamt" in kpi["Kennzahl"].tolist()
     assert "Änderung Elektrolyse durch Mehrbedarf" not in kpi["Kennzahl"].tolist()
     ctrl = next(c.value for c in at.caption if c.value.startswith("Kontrolle"))
@@ -291,9 +297,28 @@ def test_grafiken_ausgerichtet_und_seitenleiste_geordnet():
     assert "Bemessungs-Speicherdauer (Tage)" in inner and not any(l.startswith("Anteil Langzeit") for l in inner)
     assert [c.label for c in exp.checkbox] == ["Speicher als stationäres Jahr rechnen"]
     labels = [s.label for s in at.sidebar.slider]
-    assert labels.index("Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)") < labels.index(
-        "Anteil Langzeit-Wärmespeicher (%)")
+    weekend = "Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)"
+    assert weekend not in labels                              # nur mit „Manuelle Werte Sektorenkopplung“
     caps = [c.value for c in at.sidebar.caption]
+    i_wp = next(i for i, c in enumerate(caps) if c.startswith("Luft-WP"))
+    assert caps[i_wp + 1].startswith("Speicher-Einwohner")
+    assert caps[i_wp + 2].startswith("Max. Tagesbedarf Elektrolyse")
     i_ely = next(i for i, c in enumerate(caps) if c.startswith("Max. Tagesbedarf Elektrolyse"))
     i_sum = next(i for i, c in enumerate(caps) if c.startswith("E-PKW:"))
     assert i_sum == i_ely + 1
+
+
+
+def test_standardzeitraum_und_wochenende_eingeklappt():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert at.sidebar.radio[0].value == "Kalenderjahr"
+    assert at.sidebar.selectbox[0].value == 2022
+    assert any("01.01.2022 – 31.12.2022" in c.value for c in at.sidebar.caption)
+    labels = lambda: [s.label for s in at.sidebar.slider]          # noqa: E731
+    weekend = "Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)"
+    assert weekend not in labels()
+    next(c for c in at.sidebar.checkbox if "Sektorenkopplung" in c.label).check().run()
+    assert weekend in labels()
+    ni = [n.label for n in at.sidebar.number_input]
+    i_lkw = next(i for i, l in enumerate(ni) if l.startswith("Elektro-LKW"))
+    assert ni[i_lkw + 1].startswith("Elektrische Warmwasserbereitung")

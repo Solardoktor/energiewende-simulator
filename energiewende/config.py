@@ -14,6 +14,7 @@ OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 HTTP_USER_AGENT = "SDR-Energiewende-Simulator (+https://www.solardoktor.de)"
 TIMEZONE = "Europe/Berlin"
 FIRST_YEAR = 2015
+DEFAULT_YEAR = 2022            # Standardzeitraum: Kalenderjahr 2022
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 BUNDLED_DATA_DIR = ROOT_DIR / "data"      # im Repo versioniert (per GitHub Action aktualisiert)
@@ -121,6 +122,7 @@ MAX_ELECTROLYSIS_GW = 20
 STORAGE_DHW_FACTOR = 1.5          # Warmwasser direktelektrisch: +50 % gegenüber bisheriger Annahme
 MAX_STORAGE_DAYS = 183            # Obergrenze max. Speicherdauer und Prüfgrenze Dunkelflaute
 STORAGE_CHARGE_DESIGN_TEMP = -20.0  # Ladegrenze = Heizlast bei −20 °C (+ Warmwasser)
+DEFAULT_WEEKEND_SHARE = 20       # % der E-Mobilitäts-Ladeenergie gezielt am Wochenende/Feiertag
 STORAGE_DEFAULTS = {"share": 0, "loss_pct": 0.0, "days": 30, "design_temp": -7}
 
 # Mobilität, Fahrleistung je Monat (relativ, Ø ≈ 1): stilisiert, im Sommer höher
