@@ -36,12 +36,12 @@ def _axis(**kw) -> dict:
 
 COLORS = {
     "superpower": "#FFF176",
-    "base": "#808080",
+    "base": "#A6A6A6",
     "mobility": "#FF99FF",
-    "dhw": "#C2185B",
+    "dhw": "#8E24AA",
     "heating": "#d32f2f",
     "electrolysis": "#1565C0",   # Dunkelblau
-    "storage_in": "#CA2345",     # zwischen Heizung (#d32f2f) und Warmwasser (#C2185B)
+    "storage_in": "#B0296C",     # zwischen Heizung (#d32f2f) und Warmwasser (#8E24AA)
     "temperature": "#455A64",
 }
 """ AHO: GEN_STYLE = {   # (Füllfarbe halbtransparent, Musterfarbe)
@@ -114,9 +114,9 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
         elyse0 = df["electrolysis_gwh"]
         top = base + mob + dhw + heat + elyse0
         s_in, o_ww, o_h = df["storage_in_gwh"], df["storage_out_dhw_gwh"], df["storage_out_heat_gwh"]
-        _seg(fig, x, o_h, top + s_in + o_ww, "Speicher OUT (Heiz) – kein Netzbezug", "Speicher OUT (Heiz)",
+        _seg(fig, x, o_h, top + s_in + o_ww, "Speicher OUT (Heiz)", "Speicher OUT (Heiz)",
              marker=_hatched_color(COLORS["heating"]))
-        _seg(fig, x, o_ww, top + s_in, "Speicher OUT (WW) – kein Netzbezug", "Speicher OUT (WW)",
+        _seg(fig, x, o_ww, top + s_in, "Speicher OUT (WW)", "Speicher OUT (WW)",
              marker=_hatched_color(COLORS["dhw"]))
         _seg(fig, x, s_in, top, "Speicher IN", "Speicher IN", 0.85, COLORS["storage_in"])
 
@@ -140,8 +140,12 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
     stack_top = base + mob + dhw + heat + df.get("electrolysis_gwh", 0)
     if "storage_in_gwh" in df:
         stack_top = stack_top + df["storage_in_gwh"] + df["storage_out_dhw_gwh"] + df["storage_out_heat_gwh"]
-    y_max = 1.04 * float(max(stack_top.max(), df["ee_day"].max(), 1.0))
-    y_min = min(0.0, float((other.clip(upper=0)).min()) * 1.04)
+    # Leistungsachse in Vielfachen von 5 GW, Energieachse jeweils × 24 h (z. B. 10 GW = 240 GWh)
+    gw_max = 1.02 * float(max(stack_top.max(), df["ee_day"].max(), 1.0)) / 24.0
+    gw_step = next((st for st in (5, 10, 20, 25, 50, 100, 200, 250, 500) if gw_max / st <= 10), 1000)
+    gw_top = math.ceil(gw_max / gw_step) * gw_step
+    gw_bottom = -gw_step if float(other.min()) < 0 else 0
+    y_max, y_min = gw_top * 24.0, gw_bottom * 24.0
     fig.add_trace(go.Scatter(x=[x.iloc[0]], y=[0], yaxis="y2", mode="markers", marker=dict(opacity=0),
                              showlegend=False, hoverinfo="skip"))
 
@@ -154,10 +158,10 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
         xaxis=_axis(tickformat="%d.%m.",
                     # halber Tag Rand, damit die erste und letzte Säule vollständig sichtbar sind
                     range=[pd.Timestamp(start) - pd.Timedelta(hours=12), pd.Timestamp(end) + pd.Timedelta(hours=12)]),
-        yaxis=_axis(title="Energie (GWh)", range=[y_min, y_max]),
+        yaxis=_axis(title="Energie (GWh)", range=[y_min, y_max], dtick=gw_step * 24.0, tickformat=",d"),
         yaxis2=dict(title=dict(text="mittlere Leistung (GW)", font=dict(size=FONT_AXIS_TITLE)),
                     tickfont=dict(size=FONT_TICK), overlaying="y", side="right", showgrid=False,
-                    range=[y_min / 24.0, y_max / 24.0]),
+                    range=[gw_bottom, gw_top], dtick=gw_step, tickformat=",d"),
         legend=dict(orientation="h", yanchor="top", y=-0.07, xanchor="center", x=0.5, font=dict(size=FONT_LEGEND)),
         hoverlabel=dict(font=dict(size=FONT_LEGEND)),
         height=800, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white",

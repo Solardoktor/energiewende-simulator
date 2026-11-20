@@ -11,41 +11,53 @@ INF = np.inf
 
 
 # --- Rechenkern an Hand-Beispielen -----------------------------------------
-def test_dispatch_handbeispiel_mit_verlust_und_dauergrenze():
-    # Tage 0..3: Überschuss an 0, 1, 3; Residuallast an Tag 2
+def test_dispatch_handbeispiel_ohne_kapazitaetsgrenze():
+    # Tage 0..3: Überschuss an 0, 1, 3; Residuallast an Tag 2; Verlust 50 %/Tag
     d = dispatch(residual=[0, 0, 4, 0], surplus=[5, 5, 0, 3], ww_s=[1] * 4, h_s=[3] * 4,
-                 cap_out=INF, cap_in=INF, loss=0.5, max_days=2)
+                 cap_out=INF, cap_in=INF, loss=0.5, capacity=INF)
     assert d.potential_end == pytest.approx(3.0)                 # Tag 3, letzter Tag
-    assert d.storage_in.tolist() == pytest.approx([5, 5, 0, 0])  # 4 / 0,5 = 8 → 5 an Tag 1, 3 / 0,5 = 6 → 5 an Tag 0
-    assert d.out_dhw[2] == pytest.approx(1.0)
-    assert d.out_heat[2] == pytest.approx(3 - 0.25)              # Rest 1 nach 2 Tagen: 1 × 0,5² = 0,25 nicht deckbar
-    assert d.uncovered[2] == pytest.approx(0.25)
-    assert d.soc.tolist() == pytest.approx([5, 7.5, 0, 0])
-    assert d.prev_year == 0
+    assert d.storage_in.tolist() == pytest.approx([5, 5, 0, 0])
+    assert d.prev_year == pytest.approx(2.0)                     # Rest 0,25 am Tag 2 → 0,25 / 0,5³ am Ende Tag −1
+    assert d.out_dhw[2] + d.out_heat[2] == pytest.approx(4) and d.uncovered.sum() == 0
+    assert d.soc.tolist() == pytest.approx([6, 8, 0, 0])
+
+
+def test_dispatch_kapazitaetsgrenze():
+    d = dispatch(residual=[0, 0, 4, 0], surplus=[5, 5, 0, 3], ww_s=[1] * 4, h_s=[3] * 4,
+                 cap_out=INF, cap_in=INF, loss=0.5, capacity=6.0)
+    assert d.soc.max() <= 6.0 + 1e-9
+    assert d.storage_in.tolist() == pytest.approx([2, 5, 0, 0])
+    assert d.out_dhw[2] + d.out_heat[2] == pytest.approx(3) and d.uncovered[2] == pytest.approx(1)
+    assert d.soc.tolist() == pytest.approx([2, 6, 0, 0])
+
+
+def test_dispatch_lange_verweildauer_erlaubt():
+    # Überschuss nur 100 Tage vor dem Defizit: ohne Dauergrenze wird er genutzt
+    n = 120
+    R = [0.0] * n; U = [0.0] * n
+    U[0], R[100] = 10.0, 4.0
+    d = dispatch(R, U, [1] * n, [3] * n, INF, INF, loss=0.0, capacity=5.0)
+    assert d.storage_in[0] == pytest.approx(4) and d.uncovered.sum() == 0
 
 
 def test_dispatch_vorjahr():
     d = dispatch(residual=[4, 0], surplus=[0, 0], ww_s=[1, 1], h_s=[3, 3],
-                 cap_out=INF, cap_in=INF, loss=0.5, max_days=5)
+                 cap_out=INF, cap_in=INF, loss=0.5, capacity=INF)
     assert d.prev_year == pytest.approx(8.0)                     # 4 GWh am Tag 0 nach einem Verlusttag
     assert d.soc[0] == pytest.approx(0.0)
 
 
-def test_dispatch_ladegrenze_und_entladegrenze():
-    # Entladegrenze 6 begrenzt den Bedarf 10; Ladegrenze 4 begrenzt das Einspeichern an Tag 0
+def test_dispatch_lade_und_entladegrenze():
     d = dispatch(residual=[0, 10], surplus=[20, 0], ww_s=[1, 1], h_s=[9, 9],
-                 cap_out=[100, 6], cap_in=4, loss=0.0, max_days=1)
-    assert d.storage_in[0] == pytest.approx(4)
-    assert d.out_dhw[1] + d.out_heat[1] == pytest.approx(4) and d.uncovered[1] == pytest.approx(2)
-    # mit längerer Speicherdauer reicht die Suche vor den Zeitraumbeginn → Rest aus Vorjahr
-    d = dispatch(residual=[0, 10], surplus=[20, 0], ww_s=[1, 1], h_s=[9, 9],
-                 cap_out=[100, 6], cap_in=4, loss=0.0, max_days=3)
-    assert d.out_dhw[1] + d.out_heat[1] == pytest.approx(6) and d.prev_year == pytest.approx(2)
+                 cap_out=[100, 6], cap_in=4, loss=0.0, capacity=INF)
+    assert d.storage_in[0] == pytest.approx(4)                   # Ladegrenze
+    assert d.out_dhw[1] + d.out_heat[1] == pytest.approx(6)      # Entladegrenze; Rest 2 aus Vorjahr
+    assert d.prev_year == pytest.approx(2)
 
 
-def test_dispatch_dauer_null():
+def test_dispatch_kapazitaet_null():
     d = dispatch(residual=[0, 5], surplus=[9, 0], ww_s=[1, 1], h_s=[4, 4],
-                 cap_out=INF, cap_in=INF, loss=0.0, max_days=0)
+                 cap_out=INF, cap_in=INF, loss=0.0, capacity=0.0)
     assert d.storage_in.sum() == 0 and d.out_dhw.sum() + d.out_heat.sum() == 0
 
 
@@ -88,7 +100,7 @@ def test_energiebilanz_und_grenzen(loss):
     assert (z2["storage_in_gwh"][z2["storage_surplus_avail"] <= 0] == 0).all()
     assert (z2["storage_out_dhw_gwh"] <= z1["storage_ww_s"] + 1e-9).all()
     assert (z2["storage_out_heat_gwh"] <= z1["storage_h_s"] + 1e-9).all()
-    assert k["dur_max"] <= p.storage_days
+    assert z2["storage_soc_gwh"].max() <= k["capacity"] + 1e-6                # Kapazitätsgrenze
     # Z2: Residuallast sinkt genau um OUT, Superpower um IN
     assert z2["residual_day"].to_numpy() == pytest.approx((z1["residual_day"] - out).to_numpy())
     assert z2["superpower_day"].to_numpy() == pytest.approx((z1["superpower_day"] - z2["storage_in_gwh"]).to_numpy())
@@ -120,13 +132,13 @@ def test_dunkelflaute_pruefung():
 def test_dispatch_zyklisch_handbeispiel():
     # Defizit an Tag 0, Überschuss nur an Tag 3 (Zeitraumende) → zyklisch über den Jahreswechsel
     d = dispatch(residual=[4, 0, 0, 0], surplus=[0, 0, 0, 10], ww_s=[1] * 4, h_s=[3] * 4,
-                 cap_out=INF, cap_in=INF, loss=0.5, max_days=3, cyclic=True)
+                 cap_out=INF, cap_in=INF, loss=0.5, capacity=INF, cyclic=True)
     assert d.prev_year == 0 and d.potential_end == 0
     assert d.storage_in.tolist() == pytest.approx([0, 0, 0, 8])     # 4 / 0,5 (ein Verlusttag)
     assert d.out_dhw[0] + d.out_heat[0] == pytest.approx(4)
     assert d.soc.tolist() == pytest.approx([0, 0, 0, 8])            # Ende = Beginn: 8
     linear = dispatch(residual=[4, 0, 0, 0], surplus=[0, 0, 0, 10], ww_s=[1] * 4, h_s=[3] * 4,
-                      cap_out=INF, cap_in=INF, loss=0.5, max_days=3, cyclic=False)
+                      cap_out=INF, cap_in=INF, loss=0.5, capacity=INF, cyclic=False)
     assert linear.prev_year == pytest.approx(8) and linear.storage_in.sum() == 0
 
 
@@ -140,7 +152,7 @@ def test_zyklisch_bilanz_geschlossen(loss):
     assert k["in"] - k["loss"] - out == pytest.approx(0, abs=1e-6)       # stationär: Beginn = Ende
     assert z2["storage_soc_gwh"].min() >= -1e-6
     assert k["soc_start"] == pytest.approx(z2["storage_soc_gwh"].iloc[-1])
-    assert k["dur_max"] <= p.storage_days
+    assert z2["storage_soc_gwh"].max() <= k["capacity"] + 1e-6
     # Mehrverbrauch vollständig sichtbar: Z2 − Z0 = Mehrbedarf + Elektrolyse-Änderung + Verluste
     assert k["total_z2"] - k["total_z0"] == pytest.approx(
         k["extra_heat"] + k["extra_dhw"] + k["elyse_change"] + k["loss"], abs=1e-6)

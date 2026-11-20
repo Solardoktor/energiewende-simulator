@@ -185,8 +185,9 @@ def test_stufe3_speicherbilanz():
     assert "Änderung Elektrolyse durch Mehrbedarf" not in kpi["Kennzahl"].tolist()
     ctrl = next(c.value for c in at.caption if c.value.startswith("Kontrolle"))
     assert "-0,000" in ctrl or " 0,000" in ctrl
-    comp = at.dataframe[2].value
+    comp = next(d.value for d in at.dataframe if "Z0 Referenz (WP)" in d.value.columns)   # eingeklappt unten
     assert list(comp.columns) == ["Kennzahl", "Z0 Referenz (WP)", "Z1 direktelektrisch", "Z2 mit Speicher"]
+    assert any(e.label.startswith("Vergleich der Rechenzustände") for e in at.expander)
     # WW-Prüfung: Warmwasser zu klein
     next(c for c in at.sidebar.checkbox if "Sektorenkopplung" in c.label).check().run()
     next(n for n in at.sidebar.number_input if n.label.startswith("Elektrische Warmwasserbereitung")).set_value(20).run()
@@ -205,7 +206,7 @@ def test_stufe4_darstellung_mit_ohne_speicher():
     assert not at.exception, at.exception
     charts_ = [json.loads(c.proto.spec) for c in at.get("plotly_chart")]
     main_names = [t.get("name") for t in charts_[0]["data"]]
-    assert {"Speicher IN", "Speicher OUT (WW) – kein Netzbezug", "Speicher OUT (Heiz) – kein Netzbezug"} <= set(main_names)
+    assert {"Speicher IN", "Speicher OUT (WW)", "Speicher OUT (Heiz)"} <= set(main_names)
     temp_names = [t.get("name") for t in charts_[1]["data"]]
     assert {"Tagesmitteltemperatur", "Speicher IN", "Speicherinhalt"} <= set(temp_names)
     assert "Aktuell ohne Speicher (Referenz)" in [t.get("name") for t in charts_[2]["data"]]
@@ -248,6 +249,7 @@ def test_verbesserungen_hover_gw_achsen_hinweise():
     assert "e-PKW (30 Mio.)" in sub and "e-LKW (3,0 Mio.)" in sub and "Elektrolyse (10 GW)" in sub
     out_h = next(t for t in main["data"] if t.get("name", "").startswith("Speicher OUT (Heiz)"))
     assert out_h["marker"]["pattern"]["bgcolor"] == "rgba(0,0,0,0)" and out_h["marker"]["color"] == "#d32f2f"
+    assert out_h["name"] == "Speicher OUT (Heiz)"
     temp = json.loads(at.get("plotly_chart")[1].proto.spec)
     shapes = temp["layout"].get("shapes", [])
     assert len(shapes) == 2                                   # Heizgrenze und Auslegungstemperatur
@@ -256,5 +258,13 @@ def test_verbesserungen_hover_gw_achsen_hinweise():
         y_l = temp["layout"]["yaxis2"]
         assert (y_l["range"][1] - y_l["range"][0]) / y_l["dtick"] == 4
         assert (y2["range"][1] - y2["range"][0]) / y2["dtick"] == 4
-    tab = at.dataframe[0].value["(Mehr-) Verbrauch"].tolist()
-    assert "Warmwasser (Netzbezug)" in tab and any(r.startswith("Speicherentladung") for r in tab)
+    tabdf = at.dataframe[0].value
+    tab = tabdf["(Mehr-) Verbrauch"].tolist()
+    assert "Warmwasser (Netzbezug + Speicherentladung)" in tab
+    assert not any(r.startswith(("Speicherentladung", "davon Mehrbedarf")) for r in tab)
+    ww = tabdf.loc[tabdf["(Mehr-) Verbrauch"] == "Warmwasser (Netzbezug + Speicherentladung)", "Wert [TWh] "].item()
+    assert " + " in ww and ww.endswith(")")
+    # Hauptgrafik: rechte Achse in 5-GW-Schritten, linke Achse = × 24 h
+    assert lay["yaxis2"]["dtick"] % 5 == 0 and lay["yaxis"]["dtick"] == lay["yaxis2"]["dtick"] * 24
+    top10 = next(d.value for d in at.dataframe if "Gesamtdefizit [TWh]" in d.value.columns)
+    assert "Jahresnaht" not in top10.columns

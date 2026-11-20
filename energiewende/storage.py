@@ -41,13 +41,15 @@ class Dispatch:
     start_content: float = 0.0  # stationäres Jahr: Inhalt am Jahreswechsel (Beginn = Ende)
 
 
-def dispatch(residual, surplus, ww_s, h_s, cap_out, cap_in, loss: float, max_days: int,
+def dispatch(residual, surplus, ww_s, h_s, cap_out, cap_in, loss: float, capacity: float,
              cyclic: bool = False) -> Dispatch:
-    """Rückwärtsverfahren (Auftrag Teil C2, Schritte 3–5).
+    """Rückwärtsverfahren mit Kapazitätsgrenze.
 
     residual, surplus: Residuallast bzw. Überschuss nach Elektrolyse im Zustand Z1.
     ww_s, h_s: speicherfähiger Tagesbedarf Warmwasser bzw. Heizung (direktelektrisch).
     cap_out: Entladegrenze je Tag; cap_in: Ladegrenze je Tag. loss: Verlust je Tag (Anteil des Inhalts).
+    capacity: Speicherkapazität (GWh) = Bemessungsleistung × Bemessungs-Speicherdauer; der Speicherinhalt
+    überschreitet sie an keinem Tag. Die Verweildauer einzelner Energiemengen ist nicht begrenzt.
     cyclic: stationäres Jahr – die Rückwärtssuche darf über den Zeitraumbeginn hinaus auf die
     Überschüsse am Zeitraumende zugreifen; es gibt dann weder Inhalt aus dem Vorjahr noch Potenzial.
     """
@@ -63,69 +65,88 @@ def dispatch(residual, surplus, ww_s, h_s, cap_out, cap_in, loss: float, max_day
         if runs:
             shift = max(runs, key=lambda r: r[1])[0]
         arrays = [np.roll(a, -shift) for a in arrays]
-    d = _dispatch_core(*arrays, float(loss), int(max_days), cyclic)
+    d = _dispatch_core(*arrays, float(loss), float(capacity), cyclic)
     if shift:
         for name in ("storage_in", "out_dhw", "out_heat", "uncovered", "soc", "loss", "surplus_left"):
             setattr(d, name, np.roll(getattr(d, name), shift))
     return d
 
 
-def _dispatch_core(R, U, WW, H, cap_out, cap_in, loss, D, cyclic) -> Dispatch:
+def _dispatch_core(R, U, WW, H, cap_out, cap_in, loss, capacity, cyclic) -> Dispatch:
+    """Kern in gedrehten Koordinaten.
+
+    Jede Energiemenge wird in „Wert am Ausspeichertag“ y gerechnet. Eine Einspeicherung am Tag c für
+    den Ausspeichertag d erhöht den Inhalt am Ende der Tage t = c … d−1 um y / keep^(d−t). Die
+    Kapazitätsgrenze verlangt daher y ≤ min_t (Kapazität − Inhalt(t)) · keep^(d−t); dieser Wert hängt
+    nicht von c ab und wird beim Zurückgehen fortlaufend aktualisiert.
+    """
     n, keep = len(R), 1.0 - loss
     IN, OW, OH, unc = (np.zeros(n) for _ in range(4))
-    prev_year, potential, start_content, durations = 0.0, 0.0, 0.0, []
+    soc = np.zeros(n)                       # Inhalt am Tagesende aus allen zugeordneten Paketen
+    prev_year, potential, durations = 0.0, 0.0, []
+    cap = capacity if capacity > 0 else 0.0
+
+    def add_packet(c: int, k: int, x: float):
+        """Paket x am Ende von Tag c eingespeichert, k Tage später ausgespeichert."""
+        idx = (c + np.arange(k)) % n
+        np.add.at(soc, idx, x * keep ** np.arange(k))
 
     i = n - 1
     if not cyclic:
-        # 3. Endphase: Überschuss nach dem letzten Defizittag → nur Speicherpotenzial
+        # Endphase: Überschuss nach dem letzten Defizittag → nur Speicherpotenzial (höchstens Kapazität)
         while i >= 0 and R[i] <= EPS:
-            if U[i] > EPS and (n - 1 - i) < D:
+            if U[i] > EPS:
                 potential += min(U[i], cap_in[i]) * keep ** (n - 1 - i)
             i -= 1
+        potential = min(potential, cap)
 
-    # 4. Ausspeichern rückwärts, jeweils Einspeichern im nächstgelegenen früheren Überschuss
+    # Ausspeichern rückwärts, jeweils Einspeichern im nächstgelegenen früheren Überschuss
     while i >= 0:
         if R[i] > EPS:
             ow = min(WW[i], R[i], cap_out[i])
             oh = max(0.0, min(H[i], R[i] - ow, cap_out[i] - ow))
-            demand = ow + oh
-            B = demand
-            for k in range(1, D + 1):
-                B /= keep
+            need = ow + oh                          # Wert am Ausspeichertag
+            bound = np.inf                          # freie Kapazität im Fenster, in Werten am Tag i
+            max_k = (n - 1) if cyclic else (i + 1)
+            for k in range(1, max_k + 1):
                 c = i - k
-                if c < 0 and not cyclic:                    # vor Zeitraumbeginn → aus Vorjahr
-                    prev_year += B
-                    durations.append((k, B))
-                    B = 0.0
+                if c < 0 and not cyclic:            # vor Zeitraumbeginn → Inhalt aus Vorjahr (Ende Tag −1)
+                    y = min(need, max(0.0, min(bound, (cap - prev_year) * keep ** (i + 1))))
+                    if y > EPS:
+                        prev_year += y / keep ** (i + 1)
+                        np.add.at(soc, np.arange(i), y / keep ** (i - np.arange(i)))
+                        durations.append((k, y / keep ** (i + 1)))
+                        need -= y
                     break
-                c %= n                                      # stationäres Jahr: Zeitraumende
-                x = min(B, U[c], cap_in[c] - IN[c])
-                if x > EPS:
-                    IN[c] += x
-                    U[c] -= x
-                    B -= x
+                cm = c % n
+                bound = min(bound, (cap - soc[cm]) * keep ** k)
+                if bound <= EPS:
+                    break
+                y = min(need, bound, min(U[cm], cap_in[cm] - IN[cm]) * keep ** k)
+                if y > EPS:
+                    x = y / keep ** k
+                    IN[cm] += x
+                    U[cm] -= x
+                    add_packet(cm, k, x)
                     durations.append((k, x))
-                    if i - k < 0:                           # Paket liegt über den Jahreswechsel im Speicher
-                        start_content += x * keep ** (n - 1 - c)
-                if B <= EPS:
-                    B = 0.0
+                    bound -= y
+                    need -= y
+                if need <= EPS:
+                    need = 0.0
                     break
-            if B > EPS:                                     # nicht deckbar: erst Heizung, dann WW kürzen
-                rest = B * keep ** D
-                cut = min(oh, rest)
+            if need > EPS:                          # nicht deckbar: erst Heizung, dann WW kürzen
+                cut = min(oh, need)
                 oh -= cut
-                ow -= min(ow, rest - cut)
+                ow -= min(ow, need - cut)
             OW[i], OH[i] = ow, oh
-            unc[i] = demand - ow - oh
+            unc[i] = need if need > EPS else 0.0
         i -= 1
 
-    # 5. Speicherinhalt vorwärts (Start: Inhalt aus Vorjahr bzw. stationärer Inhalt am Jahreswechsel)
-    soc, lossd = np.zeros(n), np.zeros(n)
-    s = prev_year + start_content
-    for d in range(n):
-        lossd[d] = s * (1.0 - keep)
-        s = s - lossd[d] + IN[d] - OW[d] - OH[d]
-        soc[d] = s
+    # Tagesverluste aus dem Inhalt am Vortagesende
+    prev_end = np.roll(soc, 1)
+    prev_end[0] = soc[-1] if cyclic else prev_year
+    lossd = prev_end * (1.0 - keep)
+    start_content = float(soc[-1]) if cyclic else 0.0
     return Dispatch(IN, OW, OH, unc, soc, lossd, U, prev_year, potential, durations, start_content)
 
 
@@ -200,8 +221,9 @@ def compute_storage(df0: pd.DataFrame, p: Params) -> StorageResult:
         cap_in = np.full(len(df0), np.inf)
         notes.append("Ohne Temperaturdaten keine Lade-/Entladegrenzen.")
 
+    capacity = float(np.max(cap_out)) * p.storage_days if temps_ok else float("inf")   # GWh
     disp = dispatch(z1["residual_day"], z1["superpower_day"], ww_s, h_s, cap_out, cap_in,
-                    p.storage_loss, p.storage_days, cyclic=p.storage_cyclic)
+                    p.storage_loss, capacity, cyclic=p.storage_cyclic)
 
     # --- Z2: mit Speicher
     z2 = z1.copy()
@@ -247,5 +269,6 @@ def compute_storage(df0: pd.DataFrame, p: Params) -> StorageResult:
         "dur_max": int(durs[:, 0].max()) if len(durs) else 0,
         "dur_mean": float((durs[:, 0] * durs[:, 1]).sum() / durs[:, 1].sum()) if len(durs) and durs[:, 1].sum() > 0 else 0.0,
         "days_param": int(p.storage_days),
+        "capacity": capacity,
     }
     return StorageResult(True, notes, z1, z2, s1, s2, kpi)

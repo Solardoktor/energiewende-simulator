@@ -97,10 +97,11 @@ def assumptions_markdown() -> str:
 - Rechenzustände: Z0 ohne Speicher (Referenz, Werte in Klammern), Z1 Speicher-Haushalte direktelektrisch ohne
   Verschiebung, Z2 mit Speicher (Hauptergebnis). Elektrolyse hat Vorrang vor dem Einspeichern.
 - Verfahren: Rückwärts vom Zeitraumende wird für jeden Tag mit Residuallast der speicherfähige Bedarf ausgespeichert
-  (höchstens bis zur Residuallast) und im nächstgelegenen früheren Überschuss innerhalb der max. Speicherdauer
-  eingespeichert; je Tag Speicherdauer wird der Verlust (in % des Inhalts) berücksichtigt. Was innerhalb der
-  Speicherdauer nicht gedeckt werden kann, bleibt Residuallast. Die Zuordnung ist nachvollziehbar, aber nicht in
-  jedem Sonderfall die global beste.
+  (höchstens bis zur Residuallast) und im nächstgelegenen früheren Überschuss eingespeichert; je Tag im Speicher
+  wird der Verlust (in % des Inhalts) berücksichtigt. Wie lange Energie im Speicher bleibt, ist nicht begrenzt.
+  Was mangels Überschuss, Speicherkapazität oder Entladeleistung nicht gedeckt werden kann, bleibt Residuallast.
+  Die Zuordnung ist nachvollziehbar, aber nicht in jedem Sonderfall die global beste.
+- Speicherkapazität = Bemessungsleistung × Bemessungs-Speicherdauer; der Speicherinhalt überschreitet sie an keinem Tag.
 - Leistungsgrenzen: Entladeleistung = Heizlast entsprechend der Tagestemperatur bis zur Auslegungstemperatur
   (+ Warmwasser); der Mehrbedarf unterhalb der Auslegungstemperatur kommt aus dem Netz. Ladeleistung = Heizlast
   bei {c.STORAGE_CHARGE_DESIGN_TEMP:.0f} °C (+ Warmwasser).
