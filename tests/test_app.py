@@ -157,3 +157,31 @@ def test_stufe2_elektrolyse_szenarien_und_grenzen():
     assert ni["Millionen Elektro-PKW"].max == 50 and ni["Millionen Elektro-LKW"].max == 5.0
     assert ni["Millionen Einwohner elektrische Heizung"].max == 100
     assert ni["Elektrolyse-Leistung"].value == 10.0 and ni["Elektrolyse-Leistung"].max == 20.0
+
+
+def test_stufe3_speicherbilanz():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    before = at.dataframe[0].value.copy()
+    next(r for r in at.sidebar.radio if r.label == "Szenario").set_value(
+        "Agora Energiewende: Klimaneutrales Deutschland 2045").run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Szenario 2045").run()
+    ref = at.dataframe[0].value.copy()
+    next(s for s in at.sidebar.slider if s.label.startswith("Anteil Langzeit")).set_value(50).run()
+    assert not at.exception, at.exception
+    labels = [s.label for s in at.sidebar.slider]
+    assert any(l.startswith("Speicherverlust") for l in labels) and any(l.startswith("Auslegungstemperatur") for l in labels)
+    assert next(s for s in at.sidebar.slider if s.label.startswith("Auslegungstemperatur")).value == -7
+    assert at.dataframe[0].value.equals(ref)                 # Stufe 3: Jahresbilanz zeigt weiter Z0
+    assert any("Speicherbilanz" in h.value for h in at.subheader)
+    kpi = at.dataframe[1].value
+    assert "Speicher IN" in kpi["Kennzahl"].tolist() and "Mehrverbrauch Speicherlösung gesamt" in kpi["Kennzahl"].tolist()
+    ctrl = next(c.value for c in at.caption if c.value.startswith("Kontrolle"))
+    assert "-0,000" in ctrl or " 0,000" in ctrl
+    comp = at.dataframe[2].value
+    assert list(comp.columns) == ["Kennzahl", "Z0 Referenz (WP)", "Z1 direktelektrisch", "Z2 mit Speicher"]
+    # WW-Prüfung: Warmwasser zu klein
+    next(c for c in at.sidebar.checkbox if "Sektorenkopplung" in c.label).check().run()
+    next(n for n in at.sidebar.number_input if n.label.startswith("Millionen Einwohner elektrische Warmwasser")).set_value(20).run()
+    assert any("Warmwasser-Eingabe zu klein" in w.value for w in at.sidebar.warning)
+    assert any("mindestens" in i.value for i in at.info)
+    assert before is not None

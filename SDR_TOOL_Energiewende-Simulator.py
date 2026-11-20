@@ -17,7 +17,7 @@ import holidays
 import pandas as pd
 import streamlit as st
 
-from energiewende import charts, config, data, model, texts
+from energiewende import charts, config, data, model, storage, texts
 from energiewende.model import german_number as gn
 from energiewende.store import last_day_of_previous_month
 
@@ -77,8 +77,8 @@ def timed(label, fn, *args):
 
 @st.cache_data(show_spinner=False, max_entries=64)
 def run_model(raw, inst_daily, temps, holiday_dates, params: model.Params):
-    df = model.compute_daily(raw, inst_daily, temps, holiday_dates, params)
-    return df, model.summarize(df, params, cyclic=True)
+    df = model.compute_daily(raw, inst_daily, temps, holiday_dates, params)   # Zustand Z0 (Referenz)
+    return df, model.summarize(df, params, cyclic=True), storage.compute_storage(df, params)
 
 
 def fmt_period(p: model.Period | None) -> str:
@@ -116,10 +116,79 @@ def describe_run(p: model.Params, start: date, end: date, location: str,
         extras.append(f"Temp. {location}")
     if p.electrolysis_gw > 0:
         extras.append(f"Elektrolyse {gn(p.electrolysis_gw)} GW")
+    if p.storage_share > 0:
+        extras.append(f"LZ-Wärmespeicher {p.storage_share * 100:.0f} %")
     return (f"{start:%d.%m.%Y}–{end:%d.%m.%Y} | {gen}<br>"
             f"PKW {gn(ev, 0)} | LKW {gn(lkw)} | WW {gn(dhw, 0)} | Heiz. {gn(heat, 0)} Mio | "
             f"WP Luft/Sole {p.share_air_hp * 100:.0f}/{p.share_water_hp * 100:.0f} % | "
             f"WE-Laden {p.weekend_share * 100:.0f} %" + (" | " + ", ".join(extras) if extras else ""))
+
+
+def render_storage_balance(r: storage.StorageResult, s0: dict) -> None:
+    """Abschnitt „Speicherbilanz“ (Stufe 3: Zahlen; Grafiken folgen in Stufe 4)."""
+    st.subheader("Speicherbilanz Langzeit-Wärmespeicher")
+    for n in r.notes:
+        st.info(n)
+    if not r.active:
+        return
+    k = r.kpi
+    t = lambda gwh: gn(gwh / 1000.0, 2)                       # noqa: E731  GWh → TWh
+    pct = lambda a, b: gn(100.0 * a / b, 1) + " %" if b else "–"   # noqa: E731
+    out_sum = k["out_dhw"] + k["out_heat"]
+    rows = [
+        ("Speicher-Einwohner", f"{gn(k['n_s'])} Mio. EW", "zusätzliche Heizungs-EW × Speicheranteil"),
+        ("Speicher OUT Warmwasser / Heizung", f"{t(k['out_dhw'])} / {t(k['out_heat'])} TWh",
+         "ausgespeicherte Wärme (= Strom, COP 1)"),
+        ("Speicher IN", f"{t(k['in'])} TWh", "eingespeicherter Überschuss (nach Elektrolyse)"),
+        ("Speicherverluste", f"{t(k['loss'])} TWh ({pct(k['loss'], k['in'] + k['prev_year'])})",
+         "Summe der Tagesverluste; % bezogen auf eingespeicherte Energie (IN + Inhalt aus Vorjahr)"),
+        ("Mehrbedarf direktelektrisch Heizung / Warmwasser",
+         f"{t(k['extra_heat'])} TWh ({pct(k['extra_heat'], k['heat_z0'])}) / "
+         f"{t(k['extra_dhw'])} TWh ({pct(k['extra_dhw'], k['dhw_z0'])})",
+         "Z1 − Z0: COP 1 statt Wärmepumpen-Mix mit Tages-COP bzw. Warmwasser +50 %; % bezogen auf Z0"),
+        ("Änderung Elektrolyse durch Mehrbedarf", f"{t(k['elyse_change'])} TWh",
+         "weniger Überschuss für die Elektrolyse (Z1 − Z0)"),
+        ("Mehrverbrauch Speicherlösung gesamt",
+         f"{t(k['total_z2'] - k['total_z0'])} TWh ({pct(k['total_z2'] - k['total_z0'], k['total_z0'])})",
+         "Netzverbrauch Z2 − Z0 = Mehrbedarf + Änderung Elektrolyse + Verluste − Inhalt aus Vorjahr"),
+        ("Nicht deckbarer Wärmebedarf", f"{t(k['uncovered'])} TWh",
+         "kein Überschuss innerhalb der Speicherdauer bzw. über der Entladegrenze; bleibt Residuallast"),
+        ("Speicherinhalt aus Vorjahr", f"{t(k['prev_year'])} TWh", "notwendige Befüllung zu Beginn"),
+        ("Speicherpotenzial am Ende", f"{t(k['potential_end'])} TWh", "mögliche Befüllung für künftigen Bedarf"),
+        ("Jahr aus eigenem Überschuss deckbar", "ja" if k["self_sufficient"] else "nein",
+         "Potenzial am Ende ≥ Inhalt aus Vorjahr"),
+        ("Max. Speicherinhalt",
+         f"{t(k['soc_max'])} TWh ({gn(k['soc_max'] / k['n_s'], 0) if k['n_s'] else '–'} kWh je Speicher-EW, "
+         f"{k['soc_max_date']:%d.%m.%Y})", "Maximum des Speicherinhalts am Tagesende"),
+        ("Bemessungsleistung", f"{gn(k['p_design_gw'])} GW",
+         f"Entladegrenze: Heizlast bei Auslegungstemperatur ({gn(k['q_design'], 1)} kWh/EW/Tag) + Warmwasser"),
+        ("Ladeleistung", f"{gn(k['p_in_max_gw'])} GW genutzt / {gn(k['p_in_cap_gw'])} GW Grenze",
+         f"Grenze: Heizlast bei {config.STORAGE_CHARGE_DESIGN_TEMP:.0f} °C + Warmwasser"),
+        ("Entladeleistung", f"{gn(k['p_out_max_gw'])} GW genutzt / {gn(k['p_out_cap_gw'])} GW Grenze",
+         "Ø Tagesleistung (GWh ÷ 24 h)"),
+        ("Speicherdauer", f"max. {k['dur_max']} Tage, Ø {gn(k['dur_mean'], 1)} Tage (Parameter {k['days_param']})",
+         "Ø energiegewichtet über alle Einspeicherungen"),
+    ]
+    st.dataframe(pd.DataFrame(rows, columns=["Kennzahl", "Wert", "Erläuterung"]), width="stretch", hide_index=True)
+    st.caption(f"Kontrolle: Vorjahr + IN − Verluste − OUT = "
+               f"{gn((k['prev_year'] + k['in'] - k['loss'] - out_sum) / 1000.0, 3)} TWh (Soll 0).")
+
+    # Vorschau Vergleich der Zustände (in Stufe 4 in Jahresbilanz und Grafiken integriert)
+    s1, s2 = r.summary_z1, r.summary_z2
+    def longest(sx, key):
+        return sx[key][0].days if sx[key] else 0
+    comp = pd.DataFrame({
+        "Kennzahl": ["Summe Verbrauch [TWh]", "Residualerzeugung [TWh]", "Superpower [TWh]",
+                     "EE-Anteil am Verbrauch", "Längste Dunkelflaute [Tage]", "Tage mit EE-Defizit",
+                     "Längste Superpower [Tage]"],
+        **{name: [t(sx["sums_gwh"]["total_load_gwh"]), t(sx["sums_gwh"]["residual_day"]),
+                  t(sx["sums_gwh"]["superpower_day"]), gn(sx["ee_share"] * 100) + " %",
+                  str(longest(sx, "deficit_periods")), str(sx["deficit_days"]), str(longest(sx, "surplus_periods"))]
+           for name, sx in (("Z0 Referenz (WP)", s0), ("Z1 direktelektrisch", s1), ("Z2 mit Speicher", s2))},
+    })
+    st.markdown("**Vergleich der Rechenzustände** (Vorschau; Jahresbilanz und Grafiken zeigen in Stufe 3 "
+                "noch Z0)")
+    st.dataframe(comp, width="stretch", hide_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -256,13 +325,27 @@ sb.caption(f"Max. Tagesbedarf Elektrolyse: {gn(electrolysis_gw)} GW × 24 h = {g
 weekend_share = sb.slider("Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)", 0, 50, 20,
                           help="Dieser Anteil wird auf Wochenenden und Feiertage gelegt, "
                                "der Rest folgt dem saisonalen Profil über alle Tage.") / 100.0
-sb.markdown("**Heizung – Anteile (Summe ≤ 100 %)**")
-hp_air = sb.slider("Anteil Luft-Wasser-WP (%)", 0, 100, 60)
-hp_water = sb.slider("Anteil Wasser-Wasser-/Sole-WP (%)", 0, 100, 10)
+sb.markdown("**Heizung – Anteile**")
+sd = config.STORAGE_DEFAULTS
+st_share = sb.slider("Anteil Langzeit-Wärmespeicher (%)", 0, 100, sd["share"], 5,
+                     help="Bezogen auf die zusätzlichen Heizungs-Einwohner (über dem Bestand). Diese Haushalte "
+                          "heizen und bereiten Warmwasser direktelektrisch über einen Langzeit-Wärmespeicher.")
+hp_air = sb.slider("Anteil Luft-Wasser-WP (% des Rests)", 0, 100, 60)
+hp_water = sb.slider("Anteil Wasser-Wasser-/Sole-WP (% des Rests)", 0, 100, 10)
 if hp_air + hp_water > 100:
     sb.warning("Summe der WP-Anteile > 100 % – Sole-WP wird auf den Rest begrenzt.")
     hp_water = 100 - hp_air
-sb.caption(f"Direktelektrisch: {100 - hp_air - hp_water} %")
+sb.caption(f"Direktelektrisch: {100 - hp_air - hp_water} % des Rests"
+           + (f" (Rest = {100 - st_share} % ohne Langzeit-Wärmespeicher)" if st_share > 0 else ""))
+if st_share > 0:
+    st_loss = sb.slider("Speicherverlust (% des Inhalts je Tag)", 0.0, 5.0, float(sd["loss_pct"]), 0.1,
+                        format="%.1f")
+    st_days = sb.slider("Max. Speicherdauer (Tage)", 0, config.MAX_STORAGE_DAYS, sd["days"], 1)
+    st_tdesign = sb.slider("Auslegungstemperatur (°C)", -20, 5, sd["design_temp"], 1,
+                           help="Bis zu dieser Tagesmitteltemperatur deckt der Speicher die volle Heizlast; "
+                                "an kälteren Tagen kommt der Rest aus dem Netz.")
+else:
+    st_loss, st_days, st_tdesign = float(sd["loss_pct"]), sd["days"], sd["design_temp"]
 
 add_ev = max(0.0, float(mio_ev) - config.CURRENT_EV)
 add_lkw = max(0.0, round(float(mio_lkw) - config.CURRENT_LKW, 1))
@@ -270,6 +353,12 @@ add_dhw = max(0.0, float(mio_dhw) - config.CURRENT_DHW)
 add_heat = max(0.0, float(mio_heat) - config.CURRENT_HEATING)
 sb.caption(f"Zusatzverbrauch (über Stand von 2026): +{gn(add_ev)} Mio PKW, +{gn(add_lkw)} Mio LKW, "
            f"+{gn(add_dhw, 0)} Mio EW WW, +{gn(add_heat, 0)} Mio EW Heizung")
+if st_share > 0:
+    n_s = add_heat * st_share / 100.0
+    sb.caption(f"Speicher-Einwohner: {gn(n_s)} Mio. EW ({st_share} % von {gn(add_heat, 0)} Mio. zusätzlichen "
+               f"Heizungs-EW); Warmwasser mindestens {gn(config.CURRENT_DHW + n_s)} Mio. EW")
+    if add_dhw + 1e-9 < n_s:
+        sb.warning(f"Warmwasser-Eingabe zu klein: mindestens {gn(config.CURRENT_DHW + n_s)} Mio. EW nötig.")
 
 sb.subheader("CO₂")
 co2_specific = sb.number_input("Spezifische CO₂-Intensität Residual (g/kWh)", 200, 1500,
@@ -291,10 +380,12 @@ params = model.Params(
     share_air_hp=hp_air / 100.0, share_water_hp=hp_water / 100.0,
     co2_specific=float(co2_specific), hgt_reference=hgt_ref,
     electrolysis_gw=float(electrolysis_gw),
+    storage_share=st_share / 100.0, storage_loss=st_loss / 100.0, storage_days=int(st_days),
+    design_temp=float(st_tdesign),
 )
 holiday_dates = frozenset(holidays.Germany(years=range(start_date.year, end_date.year + 1)).keys())
 try:
-    df, S = run_model(raw, inst_daily, temps, holiday_dates, params)
+    df, S, ST = run_model(raw, inst_daily, temps, holiday_dates, params)
 except KeyError as e:
     st.error(f"{e} Verfügbare Serien: {', '.join(c for c in raw.columns if c not in ('date', 'coverage'))}")
     st.stop()
@@ -367,6 +458,9 @@ if electrolysis_gw > 0:
                f"{gn(elyse_gwh / electrolysis_gw, 0)} Volllaststunden bei {gn(electrolysis_gw)} GW "
                f"(Energie ÷ Leistung; Maximum {gn(len(df) * 24, 0)} h)")
 
+if st_share > 0:
+    render_storage_balance(ST, S)
+
 sp_gw, sp_date = S["peak_superpower"]
 res_gw, res_date = S["peak_residual"]
 longest_sp = S["surplus_periods"][0] if S["surplus_periods"] else None
@@ -427,7 +521,19 @@ with st.expander("Debug: Datenbasis und tägliche Differenz EE – Verbrauch", e
     debug_df = df[debug_cols].copy()
     debug_df["date"] = debug_df["date"].dt.strftime("%d.%m.%Y")
     st.dataframe(debug_df, width="stretch", hide_index=True)
-    st.download_button("Alle Tageswerte als CSV", df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+    export_df = df
+    if ST.active:
+        st_cols = ["storage_ww_s", "storage_h_s", "extra_dhw_gwh", "extra_heat_gwh", "storage_surplus_avail",
+                   "storage_residual_z1", "storage_in_gwh", "storage_out_dhw_gwh", "storage_out_heat_gwh",
+                   "storage_uncovered_gwh", "storage_loss_gwh", "storage_soc_gwh", "storage_cap_out_gwh"]
+        st.markdown("**Speicher-Tageswerte (GWh)** – U = `storage_surplus_avail`, R = `storage_residual_z1`, "
+                    "IN, OUT, Verlust, Inhalt (SOC) am Tagesende")
+        st_df = ST.z2[["date", *st_cols]].copy()
+        st_df["date"] = st_df["date"].dt.strftime("%d.%m.%Y")
+        st.dataframe(st_df, width="stretch", hide_index=True)
+        export_df = df.merge(ST.z2[["date", *st_cols]], on="date", how="left")
+    st.download_button("Alle Tageswerte als CSV",
+                       export_df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
                        file_name=f"energiewende_{start_date}_{end_date}.csv", mime="text/csv")
 
 st.markdown("---")

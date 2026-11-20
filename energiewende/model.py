@@ -38,6 +38,10 @@ class Params:
     co2_specific: float = config.CO2_DEFAULT_G_PER_KWH
     hgt_reference: float | None = None
     electrolysis_gw: float = 0.0
+    storage_share: float = 0.0          # Anteil Langzeit-Wärmespeicher an den zusätzlichen Heizungs-EW
+    storage_loss: float = 0.0           # Verlust je Tag, Anteil des Speicherinhalts
+    storage_days: int = 30              # max. Speicherdauer
+    design_temp: float = -7.0           # Auslegungstemperatur °C
 
     @property
     def share_direct(self) -> float:
@@ -167,17 +171,25 @@ def compute_daily(raw: pd.DataFrame, installed_daily: pd.DataFrame, temps: pd.Da
 
     # Bilanz
     df["ee_day"] = df[[f"{k}_scaled" for k in GEN_KEYS]].sum(axis=1) + df["other_ee"]
+    _apply_balance(df, p)
+    return df
+
+
+def _apply_balance(df: pd.DataFrame, p: Params) -> None:
+    """Elektrolyse (nur Überschuss, Vorrang vor Speicher) und Tagesbilanz aus den Lastspalten."""
     load_before = df[list(BASE_LOAD_COLS)].sum(axis=1)
-    # Elektrolyse: nur Tagesüberschuss, höchstens Leistung × 24 h
     df["electrolysis_gwh"] = np.minimum(max(0.0, p.electrolysis_gw) * 24.0,
                                         np.maximum(0.0, df["ee_day"] - load_before))
     df["total_load_gwh"] = load_before + df["electrolysis_gwh"]
+    _finish_balance(df)
+
+
+def _finish_balance(df: pd.DataFrame) -> None:
     df["ee_minus_load"] = df["ee_day"] - df["total_load_gwh"]
     df["superpower_day"] = np.maximum(0.0, df["ee_minus_load"])
     df["residual_day"] = np.maximum(0.0, -df["ee_minus_load"])
     df["residual_share"] = np.where(df["total_load_gwh"] > 0,
                                     df["residual_day"] / df["total_load_gwh"].replace(0, np.nan), 0.0)
-    return df
 
 
 # ---------------------------------------------------------------------------
@@ -229,9 +241,10 @@ def periods(dates: pd.Series, mask, energy_gwh, cyclic: bool = True) -> list[Per
 # Jahresbilanz / Kennzahlen
 # ---------------------------------------------------------------------------
 def summarize(df: pd.DataFrame, p: Params, cyclic: bool = True) -> dict:
+    cats = [*LOAD_COLS, *(["storage_in_gwh"] if "storage_in_gwh" in df else [])]
     sums = {c: float(df[c].sum()) for c in
             ["solar_scaled", "wind_onshore_scaled", "wind_offshore_scaled", "other_ee", "ee_day",
-             *LOAD_COLS, "total_load_gwh", "residual_day", "superpower_day"]}
+             *cats, "total_load_gwh", "residual_day", "superpower_day"]}
     cons = sums["total_load_gwh"]
     residual = sums["residual_day"]
 
@@ -256,7 +269,7 @@ def summarize(df: pd.DataFrame, p: Params, cyclic: bool = True) -> dict:
         "sums_gwh": sums,
         "ee_share": ee_share,
         "co2_mean": co2_mean,
-        "co2_by_category": {c: co2_of(c) for c in LOAD_COLS},
+        "co2_by_category": {c: co2_of(c) for c in cats},
         "deficit_periods": deficit,
         "surplus_periods": surplus,
         "deficit_days": int((df["residual_day"] > 0).sum()),

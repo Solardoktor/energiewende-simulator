@@ -117,6 +117,12 @@ MAX_LKW = 5.0        # Mio. E-LKW
 MAX_HEAT_EW = 100    # Mio. EW (Warmwasser und Heizung)
 MAX_ELECTROLYSIS_GW = 20.0
 
+# Langzeit-Wärmespeicher (direktelektrische Beladung, COP 1)
+STORAGE_DHW_FACTOR = 1.5          # Warmwasser direktelektrisch: +50 % gegenüber bisheriger Annahme
+MAX_STORAGE_DAYS = 183            # Obergrenze max. Speicherdauer und Prüfgrenze Dunkelflaute
+STORAGE_CHARGE_DESIGN_TEMP = -20.0  # Ladegrenze = Heizlast bei −20 °C (+ Warmwasser)
+STORAGE_DEFAULTS = {"share": 0, "loss_pct": 0.0, "days": 30, "design_temp": -7}
+
 # Mobilität, Fahrleistung je Monat (relativ, Ø ≈ 1): stilisiert, im Sommer höher
 # (Urlaubs-/Freizeitverkehr). Größenordnung ±5–6 % orientiert an monatlichen
 # Inlandsablieferungen von Ottokraftstoff (BAFA/UFOP); Ablieferungen sind nur ein

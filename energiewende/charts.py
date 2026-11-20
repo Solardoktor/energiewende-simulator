@@ -36,7 +36,7 @@ COLORS = {
     "mobility": "#FF99FF",
     "dhw": "#C2185B",
     "heating": "#d32f2f",
-    "electrolysis": "#81D4FA",
+    "electrolysis": "#1565C0",   # Dunkelblau
 }
 """ AHO: GEN_STYLE = {   # (Füllfarbe halbtransparent, Musterfarbe)
     "solar": ("rgba(255,204,0,0.35)", "#FFCC00"),
@@ -48,7 +48,7 @@ GEN_STYLE = {   # (Füllfarbe halbtransparent, Musterfarbe)
     "solar": ("#FFCC00", "#FFCC00"),
     "wind_onshore": ("#7CB342", "#7CB342"),
     "wind_offshore": ("#388E3C", "#388E3C"),
-    "other_ee": ("#1976D2", "#1976D2"),
+    "other_ee": ("#4FC3F7", "#4FC3F7"),   # Lichtblau
 }
 
 def _seg(fig, x, y, base, name, hover_label, opacity=1.0, color=None, marker=None):
@@ -76,7 +76,7 @@ def _hatched(key):
             bgcolor="rgba(0,0,0,0)",       # Hintergrund komplett durchsichtig
             fillmode="replace",
             size=5,
-            solidity=0.6,
+            solidity=0.5,
         ),
     )
 
