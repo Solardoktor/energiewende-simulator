@@ -25,6 +25,10 @@ FONT_TICK = 14
 FONT_LEGEND = 13
 FONT_NOTE = 12
 GERMAN_SEPARATORS = ",."   # Dezimalkomma, Tausenderpunkt
+# Gemeinsame Seitenränder der Zeitachsen-Grafiken (Tagesenergie, Temperatur/Speicher), damit die
+# Zeichenflächen exakt untereinander stehen; y-Achsen ohne automatische Randanpassung.
+MARGIN_L = 90
+MARGIN_R = 90
 
 
 def _axis(**kw) -> dict:
@@ -158,14 +162,15 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
         xaxis=_axis(tickformat="%d.%m.",
                     # halber Tag Rand, damit die erste und letzte Säule vollständig sichtbar sind
                     range=[pd.Timestamp(start) - pd.Timedelta(hours=12), pd.Timestamp(end) + pd.Timedelta(hours=12)]),
-        yaxis=_axis(title="Energie (GWh)", range=[y_min, y_max], dtick=gw_step * 24.0, tickformat=",d"),
+        yaxis=_axis(title="Energie (GWh)", range=[y_min, y_max], dtick=gw_step * 24.0, tickformat=",d",
+                    automargin=False),
         yaxis2=dict(title=dict(text="mittlere Leistung (GW)", font=dict(size=FONT_AXIS_TITLE)),
                     tickfont=dict(size=FONT_TICK), overlaying="y", side="right", showgrid=False,
-                    range=[gw_bottom, gw_top], dtick=gw_step, tickformat=",d"),
+                    range=[gw_bottom, gw_top], dtick=gw_step, tickformat=",d", automargin=False),
         legend=dict(orientation="h", yanchor="top", y=-0.07, xanchor="center", x=0.5, font=dict(size=FONT_LEGEND)),
         hoverlabel=dict(font=dict(size=FONT_LEGEND)),
         height=800, hovermode="x unified", plot_bgcolor="white", paper_bgcolor="white",
-        margin=dict(l=70, r=80, t=110, b=170), bargap=0, bargroupgap=0,
+        margin=dict(l=MARGIN_L, r=MARGIN_R, t=110, b=170), bargap=0, bargroupgap=0,
         annotations=[dict(
             text="Hinweis: Legende blendet einzelne Segmente aus (Lücke statt Neustapelung).<br>"
                  "(c) Dr. Andreas Horn, www.solardoktor.de  |  Daten: Energy-Charts.info, Open-Meteo  |  Stand: "
@@ -266,14 +271,17 @@ def build_temperature_storage(df: pd.DataFrame, start: date, end: date, design_t
     fig.update_yaxes(title_text="Temperatur [°C]", title_font=dict(size=FONT_AXIS_TITLE),
                      tickfont=dict(size=FONT_TICK), row=1, col=1, gridcolor="rgba(200,200,200,0.25)")
     xr = [pd.Timestamp(start) - pd.Timedelta(hours=12), pd.Timestamp(end) + pd.Timedelta(hours=12)]
+    # domain=[0, 1]: make_subplots(secondary_y=True) reserviert sonst rechts Platz für die zweite Achse;
+    # deren Beschriftung steht wie in der Tagesenergie-Grafik im Seitenrand.
     fig.update_xaxes(range=xr, tickformat="%d.%m.", tickfont=dict(size=FONT_TICK), showgrid=True,
-                     gridcolor="rgba(200,200,200,0.25)")
+                     gridcolor="rgba(200,200,200,0.25)", domain=[0, 1])
+    fig.update_yaxes(automargin=False)
     fig.update_layout(
         barmode="relative", bargap=0, font=dict(size=FONT_BASE), separators=GERMAN_SEPARATORS,
         legend=dict(orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5, font=dict(size=FONT_LEGEND)),
         hovermode="x unified", hoverlabel=dict(font=dict(size=FONT_LEGEND)),
         height=620 if has_storage else 320, plot_bgcolor="white", paper_bgcolor="white",
-        margin=dict(l=80, r=80, t=30, b=90),
+        margin=dict(l=MARGIN_L, r=MARGIN_R, t=30, b=90),
     )
     return fig
 

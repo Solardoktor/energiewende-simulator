@@ -323,60 +323,78 @@ sector_scenario = sb.radio("Szenario Sektorenkopplung", list(config.SECTOR_SCENA
 ssc = config.SECTOR_SCENARIOS[sector_scenario]
 use_manual_sector = sb.checkbox("Manuelle Werte Sektorenkopplung verwenden", value=False)
 sb.caption("Werte sind Gesamtzahlen; die Differenz zum aktuellen Bestand wird als Zusatzlast modelliert.")
+# --- Elektromobilität (direkt darunter der Wochenendanteil)
+sb.markdown("**Elektromobilität**")
 if use_manual_sector:
-    sb.markdown("**Elektromobilität**")
     mio_ev = sb.number_input(f"Elektro-PKW ({config.CURRENT_EV} … {config.MAX_EV}, gesamt) [Mio.]",
                              config.CURRENT_EV, config.MAX_EV, int(ssc["ev"]), 1)
     mio_lkw = sb.number_input(f"Elektro-LKW (0 … {config.MAX_LKW:.0f}, gesamt) [Mio.]", config.CURRENT_LKW,
                               config.MAX_LKW, float(ssc["lkw"]), 0.1, format="%.1f")
-    sb.markdown("**Wärme**")
+else:
+    mio_ev, mio_lkw = ssc["ev"], ssc["lkw"]
+weekend_share = sb.slider("Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)", 0, 50, 20,
+                          help="Dieser Anteil wird auf Wochenenden und Feiertage gelegt, "
+                               "der Rest folgt dem saisonalen Profil über alle Tage.") / 100.0
+
+# --- Wärme
+sb.markdown("**Wärme**")
+if use_manual_sector:
     mio_dhw = sb.number_input(f"Elektrische Warmwasserbereitung ({config.CURRENT_DHW} … {config.MAX_HEAT_EW}, "
                               f"gesamt) [Mio. Einwohner]", config.CURRENT_DHW, config.MAX_HEAT_EW, int(ssc["dhw"]), 1)
     mio_heat = sb.number_input(f"Elektrische Heizung ({config.CURRENT_HEATING} … {config.MAX_HEAT_EW}, gesamt) "
                                f"[Mio. Einwohner]", config.CURRENT_HEATING, config.MAX_HEAT_EW, int(ssc["heating"]), 1)
-    sb.markdown("**Elektrolyse**")
-    electrolysis_gw = sb.number_input(f"Elektrolyse (0 … {config.MAX_ELECTROLYSIS_GW}) [GW]", 0,
-                                      config.MAX_ELECTROLYSIS_GW, int(ssc["electrolysis"]), 1,
-                                      help="Elektrolyseure nutzen ausschließlich Erzeugungsüberschüsse (Superpower), "
-                                           "höchstens Leistung × 24 h je Tag.")
 else:
-    mio_ev, mio_lkw, mio_dhw, mio_heat = ssc["ev"], ssc["lkw"], ssc["dhw"], ssc["heating"]
-    electrolysis_gw = int(ssc["electrolysis"])
-sb.caption(f"E-PKW: {gn(mio_ev, 0)} Mio | E-LKW: {gn(mio_lkw)} Mio | "
-           f"E-Warmwasser: {gn(mio_dhw, 0)} Mio EW | E-Heizung: {gn(mio_heat, 0)} Mio EW | "
-           f"Elektrolyse: {gn(electrolysis_gw, 0)} GW")
-sb.caption(f"Max. Tagesbedarf Elektrolyse: {gn(electrolysis_gw, 0)} GW × 24 h = {gn(electrolysis_gw * 24, 0)} GWh")
-weekend_share = sb.slider("Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)", 0, 50, 20,
-                          help="Dieser Anteil wird auf Wochenenden und Feiertage gelegt, "
-                               "der Rest folgt dem saisonalen Profil über alle Tage.") / 100.0
+    mio_dhw, mio_heat = ssc["dhw"], ssc["heating"]
+
+# --- Heizung – Anteile: Speicheranteil immer sichtbar, übrige Parameter eingeklappt
 sb.markdown("**Heizung – Anteile**")
 sd = config.STORAGE_DEFAULTS
 st_share = sb.slider("Anteil Langzeit-Wärmespeicher (%)", 0, 100, sd["share"], 5,
                      help="Bezogen auf die zusätzlichen Heizungs-Einwohner (über dem Bestand). Diese Haushalte "
                           "heizen und bereiten Warmwasser direktelektrisch über einen Langzeit-Wärmespeicher.")
-hp_air = sb.slider("Anteil Luft-Wasser-WP (% des Rests)", 0, 100, 60)
-hp_water = sb.slider("Anteil Wasser-Wasser-/Sole-WP (% des Rests)", 0, 100, 10)
-if hp_air + hp_water > 100:
-    sb.warning("Summe der WP-Anteile > 100 % – Sole-WP wird auf den Rest begrenzt.")
-    hp_water = 100 - hp_air
-sb.caption(f"Direktelektrisch: {100 - hp_air - hp_water} % des Rests"
-           + (f" (Rest = {100 - st_share} % ohne Langzeit-Wärmespeicher)" if st_share > 0 else ""))
-if st_share > 0:
-    st_loss = sb.slider("Speicherverlust (% des Inhalts je Tag)", 0.0, 5.0, float(sd["loss_pct"]), 0.1,
-                        format="%.1f")
-    st_days = sb.slider("Bemessungs-Speicherdauer (Tage)", 0, config.MAX_STORAGE_DAYS, sd["days"], 1,
-                        help="Begrenzt die Speicherkapazität: Bemessungsleistung × Bemessungs-Speicherdauer. "
-                             "Wie lange einzelne Energiemengen im Speicher bleiben, ist nicht begrenzt.")
-    st_tdesign = sb.slider("Auslegungstemperatur (°C)", -20, 5, sd["design_temp"], 1,
-                           help="Bis zu dieser Tagesmitteltemperatur deckt der Speicher die volle Heizlast; "
-                                "an kälteren Tagen kommt der Rest aus dem Netz.")
-    st_cyclic = sb.checkbox("Speicher als stationäres Jahr rechnen", value=True,
-                            help="Wie bei den Dunkelflauten: Defizite am Zeitraumbeginn werden aus Überschüssen am "
-                                 "Zeitraumende gedeckt (Speicherinhalt Beginn = Ende). Aus: Inhalt aus Vorjahr und "
-                                 "Speicherpotenzial am Ende werden getrennt ausgewiesen.")
+with sb.expander("Wärmepumpen-Anteile" + (" und Speicherparameter" if st_share > 0 else ""), expanded=False):
+    hp_air = st.slider("Anteil Luft-Wasser-WP (% des Rests)", 0, 100, 60)
+    hp_water = st.slider("Anteil Wasser-Wasser-/Sole-WP (% des Rests)", 0, 100, 10)
+    if hp_air + hp_water > 100:
+        st.warning("Summe der WP-Anteile > 100 % – Sole-WP wird auf den Rest begrenzt.")
+        hp_water = 100 - hp_air
+    st.caption(f"Direktelektrisch: {100 - hp_air - hp_water} % des Rests"
+               + (f" (Rest = {100 - st_share} % ohne Langzeit-Wärmespeicher)" if st_share > 0 else ""))
+    if st_share > 0:
+        st_loss = st.slider("Speicherverlust (% des Inhalts je Tag)", 0.0, 5.0, float(sd["loss_pct"]), 0.1,
+                            format="%.1f")
+        st_days = st.slider("Bemessungs-Speicherdauer (Tage)", 0, config.MAX_STORAGE_DAYS, sd["days"], 1,
+                            help="Begrenzt die Speicherkapazität: Bemessungsleistung × Bemessungs-Speicherdauer. "
+                                 "Wie lange einzelne Energiemengen im Speicher bleiben, ist nicht begrenzt.")
+        st_tdesign = st.slider("Auslegungstemperatur (°C)", -20, 5, sd["design_temp"], 1,
+                               help="Bis zu dieser Tagesmitteltemperatur deckt der Speicher die volle Heizlast; "
+                                    "an kälteren Tagen kommt der Rest aus dem Netz.")
+        st_cyclic = st.checkbox("Speicher als stationäres Jahr rechnen", value=True,
+                                help="Wie bei den Dunkelflauten: Defizite am Zeitraumbeginn werden aus Überschüssen "
+                                     "am Zeitraumende gedeckt (Speicherinhalt Beginn = Ende). Aus: Inhalt aus Vorjahr "
+                                     "und Speicherpotenzial am Ende werden getrennt ausgewiesen.")
+    else:
+        st_loss, st_days, st_tdesign = float(sd["loss_pct"]), sd["days"], sd["design_temp"]
+        st_cyclic = True
+sb.caption(f"Luft-WP {hp_air} % · Sole-WP {hp_water} % · direkt {100 - hp_air - hp_water} % des Rests"
+           + (f" · Speicher: Verlust {gn(st_loss, 1)} %/Tag, Bemessung {st_days} Tage, Auslegung {st_tdesign} °C"
+              if st_share > 0 else ""))
+
+# --- Elektrolyse
+sb.markdown("**Elektrolyse**")
+if use_manual_sector:
+    electrolysis_gw = sb.number_input(f"Elektrolyse (0 … {config.MAX_ELECTROLYSIS_GW}) [GW]", 0,
+                                      config.MAX_ELECTROLYSIS_GW, int(ssc["electrolysis"]), 1,
+                                      help="Elektrolyseure nutzen ausschließlich Erzeugungsüberschüsse (Superpower), "
+                                           "höchstens Leistung × 24 h je Tag.")
 else:
-    st_loss, st_days, st_tdesign = float(sd["loss_pct"]), sd["days"], sd["design_temp"]
-    st_cyclic = True
+    electrolysis_gw = int(ssc["electrolysis"])
+sb.caption(f"Max. Tagesbedarf Elektrolyse: {gn(electrolysis_gw, 0)} GW × 24 h = {gn(electrolysis_gw * 24, 0)} GWh")
+
+# --- nachrichtlich
+sb.caption(f"E-PKW: {gn(mio_ev, 0)} Mio | E-LKW: {gn(mio_lkw)} Mio | "
+           f"E-Warmwasser: {gn(mio_dhw, 0)} Mio EW | E-Heizung: {gn(mio_heat, 0)} Mio EW | "
+           f"Elektrolyse: {gn(electrolysis_gw, 0)} GW")
 
 add_ev = max(0.0, float(mio_ev) - config.CURRENT_EV)
 add_lkw = max(0.0, round(float(mio_lkw) - config.CURRENT_LKW, 1))

@@ -268,3 +268,32 @@ def test_verbesserungen_hover_gw_achsen_hinweise():
     assert lay["yaxis2"]["dtick"] % 5 == 0 and lay["yaxis"]["dtick"] == lay["yaxis2"]["dtick"] * 24
     top10 = next(d.value for d in at.dataframe if "Gesamtdefizit [TWh]" in d.value.columns)
     assert "Jahresnaht" not in top10.columns
+
+
+def test_grafiken_ausgerichtet_und_seitenleiste_geordnet():
+    import json
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario").set_value(
+        "Agora Energiewende: Klimaneutrales Deutschland 2045").run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Szenario 2045").run()
+    next(s for s in at.sidebar.slider if s.label.startswith("Anteil Langzeit")).set_value(50).run()
+    assert not at.exception, at.exception
+    main, temp = (json.loads(c.proto.spec)["layout"] for c in at.get("plotly_chart")[:2])
+    assert main["margin"]["l"] == temp["margin"]["l"] and main["margin"]["r"] == temp["margin"]["r"]
+    for ax in ("xaxis", "xaxis2"):
+        assert temp[ax]["domain"] == [0, 1]                     # keine Reserve für die zweite Achse
+    assert temp["yaxis3"]["side"] == "right" and temp["yaxis3"]["automargin"] is False
+    assert main["yaxis"]["automargin"] is False
+    # Seitenleiste: WP- und Speicherparameter eingeklappt, Speicheranteil sichtbar außerhalb
+    exp = next(e for e in at.sidebar.expander if e.label.startswith("Wärmepumpen-Anteile"))
+    inner = [s.label for s in exp.slider]
+    assert inner[:2] == ["Anteil Luft-Wasser-WP (% des Rests)", "Anteil Wasser-Wasser-/Sole-WP (% des Rests)"]
+    assert "Bemessungs-Speicherdauer (Tage)" in inner and not any(l.startswith("Anteil Langzeit") for l in inner)
+    assert [c.label for c in exp.checkbox] == ["Speicher als stationäres Jahr rechnen"]
+    labels = [s.label for s in at.sidebar.slider]
+    assert labels.index("Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)") < labels.index(
+        "Anteil Langzeit-Wärmespeicher (%)")
+    caps = [c.value for c in at.sidebar.caption]
+    i_ely = next(i for i, c in enumerate(caps) if c.startswith("Max. Tagesbedarf Elektrolyse"))
+    i_sum = next(i for i, c in enumerate(caps) if c.startswith("E-PKW:"))
+    assert i_sum == i_ely + 1
