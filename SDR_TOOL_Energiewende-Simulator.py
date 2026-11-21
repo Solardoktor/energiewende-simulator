@@ -17,7 +17,7 @@ import holidays
 import pandas as pd
 import streamlit as st
 
-from energiewende import charts, config, data, model, storage, texts
+from energiewende import charts, config, costs, data, model, storage, texts
 from energiewende.model import german_number as gn
 from energiewende.store import last_day_of_previous_month
 
@@ -100,6 +100,56 @@ def result_line(label: str, value: str, note: str | None = None, target=st) -> N
         f"<div style='font-size:1.2rem;font-weight:600;line-height:1.4'>{html.escape(value)}</div>"
         f"{note_html}</div>",
         unsafe_allow_html=True)
+
+
+def render_cost_comparison(c: dict | None, cp: costs.CostParams) -> None:
+    """Kasten „Kostenvergleich Direktheizung vs. Speicherheizung“."""
+    if c is None:
+        return
+    st.subheader("Kostenvergleich Direktheizung vs. Speicherheizung")
+    st.markdown(texts.COST_INTRO)
+    a, b = c["a"], c["b"]
+    mrd = lambda v: gn(v, 1)                                  # noqa: E731
+    rows = [
+        ("Einwohner", "Mio. EW", gn(c["n_s"]), gn(c["n_s"]), None),
+        ("Nutzwärme Heizung + Warmwasser", "TWh/a", gn(c["heat_twh"]), gn(c["heat_twh"]), None),
+        ("Strombezug", "TWh/a", gn(a["load_twh"]), gn(b["load_twh"]), b["load_twh"] - a["load_twh"]),
+        ("davon zum Preis von Überschussstrom", "TWh/a", gn(a["surplus_twh"]), gn(b["surplus_twh"]),
+         b["surplus_twh"] - a["surplus_twh"]),
+        ("mittlerer Strompreis (ohne Netzentgelte)", "ct/kWh", gn(a["price_ct"]), gn(b["price_ct"]),
+         b["price_ct"] - a["price_ct"]),
+        ("Wärmepumpenleistung", "GW(el)", gn(a["wp_gw"]), gn(b["wp_gw"]), b["wp_gw"] - a["wp_gw"]),
+        ("Höchste Residualleistung (Jahresdauerlinie)", "GW", gn(c["peak_res_z0_gw"]), gn(c["peak_res_z2_gw"]),
+         c["peak_res_z2_gw"] - c["peak_res_z0_gw"]),
+        ("zusätzliche Residualleistung (Erdgas-KW)", "GW", gn(a["res_gw"]), gn(b["res_gw"]), b["res_gw"] - a["res_gw"]),
+        ("Speicherkapazität (HTS) = max. Speicherinhalt", "TWh", gn(a["cap_twh"], 2), gn(b["cap_twh"], 2),
+         b["cap_twh"] - a["cap_twh"]),
+        ("Investition Wärmepumpen", "Mrd. €", mrd(a["inv_wp"]), mrd(b["inv_wp"]), b["inv_wp"] - a["inv_wp"]),
+        ("Investition Residualkraftwerke", "Mrd. €", mrd(a["inv_res"]), mrd(b["inv_res"]), b["inv_res"] - a["inv_res"]),
+        ("Investition Langzeitspeicher", "Mrd. €", mrd(a["inv_sto"]), mrd(b["inv_sto"]), b["inv_sto"] - a["inv_sto"]),
+        ("Investition gesamt", "Mrd. €", mrd(a["invest"]), mrd(b["invest"]), b["invest"] - a["invest"]),
+        (f"Annuität Investitionen (WP {cp.life_wp_years} J., KW {cp.life_res_years} J., Speicher "
+         f"{cp.life_sto_years} J.; {gn(cp.interest_pct)} %)", "Mrd. €/a",
+         mrd(a["annuity"]), mrd(b["annuity"]), b["annuity"] - a["annuity"]),
+        ("Energiekosten", "Mrd. €/a", mrd(a["energy"]), mrd(b["energy"]), b["energy"] - a["energy"]),
+        ("Netzentgelte/Umlagen", "Mrd. €/a", mrd(a["fees"]), mrd(b["fees"]), b["fees"] - a["fees"]),
+        ("Jahreskosten gesamt", "Mrd. €/a", mrd(a["total"]), mrd(b["total"]), b["total"] - a["total"]),
+        ("Jahreskosten je Einwohner", "€/a", gn(a["per_ew"], 0), gn(b["per_ew"], 0), b["per_ew"] - a["per_ew"]),
+        ("Jahreskosten je kWh Nutzwärme", "ct/kWh", gn(a["ct_per_kwh_heat"]), gn(b["ct_per_kwh_heat"]),
+         b["ct_per_kwh_heat"] - a["ct_per_kwh_heat"]),
+    ]
+    def decimals(unit: str) -> int:
+        return {"€/a": 0, "TWh": 2}.get(unit, 1)
+
+    table = pd.DataFrame([{
+        "Kostenposition": n, "Einheit": u, "Direktheizung (WP-Mix)": va, "Speicherheizung (HTS)": vb,
+        "Differenz Speicher − Direkt": "" if d is None else (("+" if d > 0 else "") + gn(d, decimals(u))),
+    } for n, u, va, vb, d in rows])
+    st.dataframe(table, width="stretch", hide_index=True)
+    diff = b["total"] - a["total"]
+    st.caption(("Speicherheizung günstiger um " if diff < 0 else "Speicherheizung teurer um ")
+               + f"{gn(abs(diff), 1)} Mrd. €/a ({gn(abs(diff) * 1e9 / (c['n_s'] * 1e6), 0)} € je Einwohner und Jahr). "
+               + texts.COST_NOTES.strip().replace("\n", " "))
 
 
 def render_state_comparison(r: storage.StorageResult, s0: dict) -> None:
@@ -414,6 +464,32 @@ add_lkw = max(0.0, round(float(mio_lkw) - config.CURRENT_LKW, 1))
 sb.caption(f"Zusatzverbrauch (über Stand von 2026): +{gn(add_ev)} Mio PKW, +{gn(add_lkw)} Mio LKW, "
            f"+{gn(add_dhw, 0)} Mio EW WW, +{gn(add_heat, 0)} Mio EW Heizung")
 
+if st_share > 0:
+    with sb.expander("Kostenparameter (Kostenvergleich)", expanded=False):
+        cd = costs.CostParams()
+        cost_params = costs.CostParams(
+            wp_eur_per_kw=st.number_input("Wärmepumpe [€/kW(el)]", 0, 50_000, int(cd.wp_eur_per_kw), 500),
+            residual_eur_per_kw=st.number_input("Residualleistung Erdgas-KW [€/kW]", 0, 10_000,
+                                                int(cd.residual_eur_per_kw), 100),
+            storage_eur_per_kwh=st.number_input("Langzeitspeicher HTS [€/kWh]", 0.0, 500.0, cd.storage_eur_per_kwh,
+                                                1.0, format="%.0f"),
+            price_gas_ct=st.number_input("Strompreis Erdgasstrom [ct/kWh]", 0.0, 100.0, cd.price_gas_ct, 0.5,
+                                         format="%.1f"),
+            price_surplus_ct=st.number_input("Strompreis Superpower [ct/kWh]", 0.0, 50.0, cd.price_surplus_ct, 0.5,
+                                             format="%.1f"),
+            fee_inflexible_ct=st.number_input("Netzentgelte/Umlagen Direktheizung, unflexibel [ct/kWh]", 0.0, 50.0,
+                                              cd.fee_inflexible_ct, 0.5, format="%.1f"),
+            fee_flexible_ct=st.number_input("Netzentgelte/Umlagen Speicherheizung, flexibel [ct/kWh]", 0.0, 50.0,
+                                            cd.fee_flexible_ct, 0.5, format="%.1f"),
+            life_wp_years=st.number_input("Nutzungsdauer Wärmepumpen [Jahre]", 5, 80, cd.life_wp_years, 1),
+            life_res_years=st.number_input("Nutzungsdauer Erdgaskraftwerke [Jahre]", 5, 80, cd.life_res_years, 1),
+            life_sto_years=st.number_input("Nutzungsdauer Langzeit-Wärmespeicher [Jahre]", 5, 80,
+                                           cd.life_sto_years, 1),
+            interest_pct=st.number_input("Kalkulationszins [%]", 0.0, 15.0, cd.interest_pct, 0.5, format="%.1f"),
+        )
+else:
+    cost_params = costs.CostParams()
+
 sb.subheader("CO₂")
 co2_specific = sb.number_input("Spezifische CO₂-Intensität Residual (g/kWh)", 200, 1500,
                                config.CO2_DEFAULT_G_PER_KWH, 50)
@@ -564,6 +640,10 @@ if electrolysis_gw > 0:
 
 if st_share > 0:
     render_storage_balance(ST, S0)
+    if ST.active:
+        render_cost_comparison(costs.compute_costs(df0, ST, params, cost_params,
+                                                   S0["peak_residual"][0], ST.summary_z2["peak_residual"][0]),
+                               cost_params)
 
 def period_line(sx: dict, kind: str) -> str:
     if kind == "sp":

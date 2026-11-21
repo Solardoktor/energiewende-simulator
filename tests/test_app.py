@@ -322,3 +322,28 @@ def test_standardzeitraum_und_wochenende_eingeklappt():
     ni = [n.label for n in at.sidebar.number_input]
     i_lkw = next(i for i, l in enumerate(ni) if l.startswith("Elektro-LKW"))
     assert ni[i_lkw + 1].startswith("Elektrische Warmwasserbereitung")
+
+
+def test_kostenvergleich_kasten():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert not any(h.value.startswith("Kostenvergleich") for h in at.subheader)
+    next(r for r in at.sidebar.radio if r.label == "Szenario").set_value(
+        "Agora Energiewende: Klimaneutrales Deutschland 2045").run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Szenario 2045").run()
+    next(s for s in at.sidebar.slider if s.label.startswith("Anteil Langzeit")).set_value(50).run()
+    assert not at.exception, at.exception
+    assert any(h.value == "Kostenvergleich Direktheizung vs. Speicherheizung" for h in at.subheader)
+    tab = next(d.value for d in at.dataframe if "Kostenposition" in d.value.columns)
+    assert "Jahreskosten gesamt" in tab["Kostenposition"].tolist()
+    exp = next(e for e in at.sidebar.expander if e.label.startswith("Kostenparameter"))
+    vals = {n.label: n.value for n in exp.number_input}
+    assert vals["Wärmepumpe [€/kW(el)]"] == 8000 and vals["Langzeitspeicher HTS [€/kWh]"] == 20
+    assert vals["Strompreis Erdgasstrom [ct/kWh]"] == 18 and vals["Strompreis Superpower [ct/kWh]"] == 1
+    assert vals["Netzentgelte/Umlagen Direktheizung, unflexibel [ct/kWh]"] == 17
+    assert vals["Netzentgelte/Umlagen Speicherheizung, flexibel [ct/kWh]"] == 10
+    assert vals["Nutzungsdauer Wärmepumpen [Jahre]"] == 20 and vals["Nutzungsdauer Erdgaskraftwerke [Jahre]"] == 40
+    assert vals["Nutzungsdauer Langzeit-Wärmespeicher [Jahre]"] == 50
+    before = tab.copy()
+    next(n for n in exp.number_input if n.label.startswith("Langzeitspeicher HTS")).set_value(5).run()
+    after = next(d.value for d in at.dataframe if "Kostenposition" in d.value.columns)
+    assert not after.equals(before)

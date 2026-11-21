@@ -169,3 +169,26 @@ Wenn dir das Tool weiterhilft, freue ich mich über eine Unterstützung:
 
 Kontakt: [solardoktor.de](https://www.solardoktor.de)
 """
+
+
+COST_INTRO = """
+Verglichen werden die Kosten der Speicher-Haushalte für **Direktheizung** – Wärmepumpen-Mix und
+Direktstromheizung einschließlich Warmwasserbereitung sowie der dafür erforderlichen zusätzlichen
+Residualleistung – mit den Kosten einer **Langzeit-Speicherheizung**. Berücksichtigt werden die
+Investitionen (Wärmepumpen, Erdgaskraftwerke für die Residualerzeugung, Hochtemperatur-Sandspeicher)
+sowie die Energiekosten: Strom für Direktheizung mit hohem Anteil an Erdgasstrom, der über die
+Merit-Order den Strompreis bestimmt, gegenüber Speicherstrom aus Überschüssen zu Kosten nahe null.
+Hinzu kommen Netzentgelte und Umlagen für Direktheizung (kaum Flexibilität) bzw.
+Langzeit-Speicherheizung (sehr hohe Flexibilität). Die angesetzten Investitionskosten lassen sich im
+[KI-Chat zu den Investitionskosten](https://grok.com/c/51fd61e9-65eb-4b98-840d-ff2e531dc00a) nachvollziehen.
+"""
+
+COST_NOTES = """
+Annahmen: Strompreis je Tag = Anteil Residualerzeugung an der Tageslast × Preis Erdgasstrom + übriger
+Anteil × Preis Überschussstrom (entspricht der CO₂-Anteilsrechnung). Wärmepumpenleistung bei
+Auslegungstemperatur; zusätzliche Residualleistung = Differenz der Höchstwerte der Residualleistung mit
+und ohne Speicher (geordnete Jahresdauerlinie, Ø Tagesleistung; Stundenspitzen liegen höher), angerechnet
+der Variante mit dem höheren Höchstwert. Speicherinvestition nach dem maximalen Speicherinhalt.
+Investitionen als Annuität mit getrennten Nutzungsdauern für Wärmepumpen, Erdgaskraftwerke und Speicher. Nicht enthalten: Heizstäbe
+bzw. Direktheizgeräte, Wärmeverteilung im Gebäude, Wartung, Brennstoff-Fixkosten der Kraftwerke.
+"""
