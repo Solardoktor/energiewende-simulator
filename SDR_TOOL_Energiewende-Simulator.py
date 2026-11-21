@@ -127,8 +127,8 @@ def render_cost_comparison(c: dict | None, cp: costs.CostParams) -> None:
          b["cap_twh"] - a["cap_twh"]),
         ("Investition Wärmepumpen", "Mrd. €", mrd(a["inv_wp"]), mrd(b["inv_wp"]), b["inv_wp"] - a["inv_wp"]),
         ("Investition Langzeitspeicher", "Mrd. €", mrd(a["inv_sto"]), mrd(b["inv_sto"]), b["inv_sto"] - a["inv_sto"]),
-        ("Einsparung Residualkraftwerke", "Mrd. €", mrd(a["inv_res"]), mrd(b["inv_res"]), b["inv_res"] - a["inv_res"]),
-        ("Investition gesamt (Wärmepumpen + Residualkraftwerke bzw. Langzeitspeicher)", "Mrd. €",
+        ("Investition Residualkraftwerke", "Mrd. €", mrd(a["inv_res"]), mrd(b["inv_res"]), b["inv_res"] - a["inv_res"]),
+        ("Investition gesamt", "Mrd. €",
          mrd(a["invest"]), mrd(b["invest"]), b["invest"] - a["invest"]),
         (f"Annuität Investitionen (WP {cp.life_wp_years} J., KW {cp.life_res_years} J., Speicher "
          f"{cp.life_sto_years} J.; {gn(cp.interest_pct)} %)", "Mrd. €/a",
@@ -234,7 +234,7 @@ def render_storage_balance(r: storage.StorageResult, s0: dict) -> None:
          f"{k['soc_max_date']:%d.%m.%Y})", "Maximum des Speicherinhalts am Tagesende"),
         ("Speicherdauer und Zyklenzahl",
          f"{gn(k['soc_max'] / design_gwh_day, 1) if design_gwh_day > 0 else '–'} Tage / "
-         f"{gn((k['out_dhw'] + k['out_heat']) / k['soc_max'], 1) if k['soc_max'] > 0 else '–'} Zyklen",
+         f"{gn((k['out_dhw'] + k['out_heat']) / k['soc_max'], 1) if k['soc_max'] > 0 else '–'} Zyklen (inter dies)",
          "Max. Speicherinhalt ÷ Bemessungsleistung; Summe Speicherentladung ÷ max. Speicherinhalt"),
         ("Speicherkapazität", f"{t(k['capacity'])} TWh",
          f"Bemessungsleistung × Bemessungs-Speicherdauer ({k['days_param']} Tage); Obergrenze des Speicherinhalts"),

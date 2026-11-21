@@ -339,8 +339,9 @@ def test_kostenvergleich_kasten():
     i = names.index("davon zum Preis von Überschussstrom")
     assert names[i + 1] == "davon zum Preis von Erdgasstrom"
     j = names.index("Investition Langzeitspeicher")
-    assert names[j + 1] == "Einsparung Residualkraftwerke"
-    assert names[j + 2] == "Investition gesamt (Wärmepumpen + Residualkraftwerke bzw. Langzeitspeicher)"
+    assert names[j + 1] == "Investition Residualkraftwerke" and names[j + 2] == "Investition gesamt"
+    kpi = at.dataframe[1].value.set_index("Kennzahl")["Wert"]
+    assert kpi["Speicherdauer und Zyklenzahl"].endswith("Zyklen (inter dies)")
     exp = next(e for e in at.sidebar.expander if e.label.startswith("Kostenparameter"))
     vals = {n.label: n.value for n in exp.number_input}
     assert vals["Wärmepumpe [€/kW(el)]"] == 8000 and vals["Langzeitspeicher HTS [€/kWh]"] == 15
