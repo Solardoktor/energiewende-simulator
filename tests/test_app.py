@@ -334,10 +334,16 @@ def test_kostenvergleich_kasten():
     assert not at.exception, at.exception
     assert any(h.value == "Kostenvergleich Direktheizung vs. Speicherheizung" for h in at.subheader)
     tab = next(d.value for d in at.dataframe if "Kostenposition" in d.value.columns)
-    assert "Jahreskosten gesamt" in tab["Kostenposition"].tolist()
+    names = tab["Kostenposition"].tolist()
+    assert "Jahreskosten gesamt" in names and not any(n.startswith("zusätzliche Residualleistung") for n in names)
+    i = names.index("davon zum Preis von Überschussstrom")
+    assert names[i + 1] == "davon zum Preis von Erdgasstrom"
+    j = names.index("Investition Langzeitspeicher")
+    assert names[j + 1] == "Einsparung Residualkraftwerke"
+    assert names[j + 2] == "Investition gesamt (Wärmepumpen + Residualkraftwerke bzw. Langzeitspeicher)"
     exp = next(e for e in at.sidebar.expander if e.label.startswith("Kostenparameter"))
     vals = {n.label: n.value for n in exp.number_input}
-    assert vals["Wärmepumpe [€/kW(el)]"] == 8000 and vals["Langzeitspeicher HTS [€/kWh]"] == 20
+    assert vals["Wärmepumpe [€/kW(el)]"] == 8000 and vals["Langzeitspeicher HTS [€/kWh]"] == 15
     assert vals["Strompreis Erdgasstrom [ct/kWh]"] == 18 and vals["Strompreis Superpower [ct/kWh]"] == 1
     assert vals["Netzentgelte/Umlagen Direktheizung, unflexibel [ct/kWh]"] == 17
     assert vals["Netzentgelte/Umlagen Speicherheizung, flexibel [ct/kWh]"] == 10

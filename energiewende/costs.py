@@ -27,7 +27,7 @@ from .storage import StorageResult, heat_per_ew_day
 class CostParams:
     wp_eur_per_kw: float = 8000.0          # Wärmepumpe je kW elektrisch
     residual_eur_per_kw: float = 2000.0    # Residualkraftwerk (Erdgas) je kW
-    storage_eur_per_kwh: float = 20.0      # Hochtemperatur-Sandspeicher je kWh Kapazität
+    storage_eur_per_kwh: float = 15.0      # Hochtemperatur-Sandspeicher je kWh Kapazität
     price_gas_ct: float = 18.0             # Strompreis Residual-/Erdgasstrom
     price_surplus_ct: float = 1.0          # Strompreis Überschussstrom (Superpower)
     fee_inflexible_ct: float = 17.0        # Netzentgelte/Umlagen unflexibler Bezug (Direktheizung)
@@ -115,7 +115,7 @@ def compute_costs(df0: pd.DataFrame, r: StorageResult, p: Params, c: CostParams,
         total = annuity + energy + fees
         heat = float(h_s.sum() + ww_s.sum())          # Nutzwärme Heizung + Warmwasser (COP 1 = Wärme)
         return {
-            "load_twh": e / 1000.0, "surplus_twh": surplus_gwh / 1000.0,
+            "load_twh": e / 1000.0, "surplus_twh": surplus_gwh / 1000.0, "gas_twh": (e - surplus_gwh) / 1000.0,
             "price_ct": energy * 1e5 / e if e > 0 else 0.0,
             "wp_gw": wp, "res_gw": res_gw, "cap_twh": (cap_gwh / 1000.0) if prefix == "b" else 0.0,
             "inv_wp": inv[f"{prefix}_wp"], "inv_res": inv[f"{prefix}_res"], "inv_sto": inv[f"{prefix}_sto"],

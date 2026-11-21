@@ -46,7 +46,9 @@ def test_strombezug_und_kostenbausteine():
         assert v["invest"] == pytest.approx(v["inv_wp"] + v["inv_res"] + v["inv_sto"])
         assert 1.0 <= v["price_ct"] <= 18.0
     assert a["inv_sto"] == 0 and b["inv_wp"] == 0 and a["inv_wp"] > 0 and b["inv_sto"] > 0
-    assert b["inv_sto"] == pytest.approx(k["soc_max"] * 1e6 * 20 / 1e9)          # max. Speicherinhalt
+    assert b["inv_sto"] == pytest.approx(k["soc_max"] * 1e6 * 15 / 1e9)          # max. Speicherinhalt, 15 €/kWh
+    for v in (a, b):
+        assert v["surplus_twh"] + v["gas_twh"] == pytest.approx(v["load_twh"])
     # zusätzliche Residualleistung = Differenz der Höchstwerte, der höheren Variante angerechnet
     delta = c["peak_res_z2_gw"] - c["peak_res_z0_gw"]
     assert b["res_gw"] - a["res_gw"] == pytest.approx(delta) and min(a["res_gw"], b["res_gw"]) == 0
