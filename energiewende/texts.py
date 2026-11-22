@@ -143,7 +143,8 @@ def assumptions_markdown() -> str:
 - Tagesaggregation in deutscher Ortszeit; Intervalllänge aus den Zeitstempeln (15 oder 60 min)
 - Skalierung Solar/Wind auf die Zielleistung (abschaltbar); installierte Leistung gilt laut
   Energy-Charts zum Monatsende und wird tageweise linear interpoliert
-- „Status Quo“ = installierte Leistung am Ende des gewählten Zeitraums
+- „Status Quo (Ist-Leistung heute)“ (Standard) = neueste verfügbare installierte Leistung laut Energy-Charts;
+  „Status Quo (Ist-Leistung am Zeitraumende)“ = installierte Leistung am Ende des gewählten Zeitraums
 - Sonstige EE (Biomasse, Laufwasser, Speicherwasser, Geothermie, 50 % Abfall) unskaliert
 - Pumpspeicher optional (netto = Erzeugung minus Pumpstrom, d. h. die Speicherverluste)
 

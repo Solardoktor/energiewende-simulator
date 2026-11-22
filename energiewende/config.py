@@ -56,8 +56,11 @@ FALLBACK_INSTALLED_GW = {"solar": 130.0, "wind_onshore": 70.0, "wind_offshore": 
 # ---------------------------------------------------------------------------
 # Szenarien (GWp / GW). "Status Quo" wird aus den Daten abgeleitet.
 # ---------------------------------------------------------------------------
+MANUAL = "Manuelle Werte"                                   # Alternativszenario bei Ausbau und Sektorenkopplung
+STATUS_QUO_TODAY = "Status Quo (Ist-Leistung heute)"          # Standard: neuester Monatswert
 STATUS_QUO = "Status Quo (Ist-Leistung am Zeitraumende)"
 SCENARIOS = {
+    STATUS_QUO_TODAY: None,
     STATUS_QUO: None,
     "Ziele der Bundesregierung für 2030": {"solar": 215.0, "wind_onshore": 115.0, "wind_offshore": 30.0},
     "Agora Energiewende: Klimaneutrales Deutschland 2045": {"solar": 400.0, "wind_onshore": 180.0, "wind_offshore": 70.0},

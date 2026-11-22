@@ -289,8 +289,10 @@ with col_logo:
 # Seitenleiste: Zeitraum
 # ---------------------------------------------------------------------------
 today = date.today()
-sb = st.sidebar
-sb.header("Einstellungen")
+st.sidebar.header("Einstellungen")
+# Feste Abschnitte (Reihenfolge in der Seitenleiste); befüllt werden sie in Programmreihenfolge.
+box_period, box_build, box_sector, box_cost, box_temp, box_co2 = (st.sidebar.container() for _ in range(6))
+sb = box_period
 period_mode = sb.radio("Zeitraum", ["Letzte 365 Tage", "Kalenderjahr"], index=1)
 if period_mode == "Kalenderjahr":
     years = list(range(today.year - 1, config.FIRST_YEAR - 1, -1))   # nur abgeschlossene Jahre
@@ -302,11 +304,9 @@ else:
     start_date = end_date - timedelta(days=364)
 sb.caption(f"Zeitraum: {start_date:%d.%m.%Y} – {end_date:%d.%m.%Y}")
 
-load_scale = sb.slider("Last-Skalierung (%)", 50, 200, 100, 5) / 100.0
-
-sb.markdown("**Temperatur (Heizung, Mobilität)**")
-location = sb.selectbox("Standort Temperaturdaten", list(config.LOCATIONS),
-                        index=list(config.LOCATIONS).index(config.DEFAULT_LOCATION))
+box_temp.markdown("**Temperatur (Heizung, Mobilität)**")
+location = box_temp.selectbox("Standort Temperaturdaten", list(config.LOCATIONS),
+                              index=list(config.LOCATIONS).index(config.DEFAULT_LOCATION))
 
 # ---------------------------------------------------------------------------
 # Daten laden
@@ -337,28 +337,41 @@ inst_daily, inst_fallback = data.daily_installed(installed, raw["date"])
 if inst_fallback:
     notes.append("Installierte Leistung nicht verfügbar – Ersatzwerte "
                  + ", ".join(f"{k} {v:.0f} GW" for k, v in config.FALLBACK_INSTALLED_GW.items()) + ".")
-status_quo = {k: round(float(inst_daily[k].iloc[-1]), 1) for k in model.GEN_KEYS}
+status_quo = {k: round(float(inst_daily[k].iloc[-1]), 1) for k in model.GEN_KEYS}   # am Zeitraumende
+status_quo_today, status_quo_today_date = data.latest_installed(installed)           # neuester Monatswert
 
 # ---------------------------------------------------------------------------
 # Seitenleiste: Szenarien und Schalter
 # ---------------------------------------------------------------------------
+sb = box_build
 sb.subheader("Ausbauszenarien")
-scenario = sb.radio("Szenario", list(config.SCENARIOS), index=0)
-sc = config.SCENARIOS[scenario] or status_quo
-
-use_manual = sb.checkbox("Manuelle Ziele verwenden", value=False)
-disable_monthly_scaling = sb.checkbox(
-    "Monatliche Skalierung aus", value=False,
-    help="Verwendet die Ist-Erzeugung ohne Skalierung (Ziel = Ist). Zur Kontrolle gegenüber Energy-Charts.")
-disable_pumped_storage = sb.checkbox(
-    "Pumpspeicher/-Ladung aus", value=True,
-    help="Schließt Pumpspeicher-Erzeugung und Pumpstrom aus. Eingeschaltet zählt der Saldo (≈ Speicherverluste).")
-if use_manual:
-    t_solar = sb.number_input("Ziel Solar (GWp)", 0.0, 600.0, float(sc["solar"]), 5.0)
-    t_on = sb.number_input("Ziel Wind Onshore (GW)", 0.0, 250.0, float(sc["wind_onshore"]), 5.0)
-    t_off = sb.number_input("Ziel Wind Offshore (GW)", 0.0, 100.0, float(sc["wind_offshore"]), 1.0)
+scenario = sb.radio("Szenario", [*config.SCENARIOS, config.MANUAL], index=0)
+if scenario != config.MANUAL:
+    st.session_state["last_build_scenario"] = scenario
+# Manuelle Werte: Vorbelegung mit dem zuletzt gewählten Szenario
+base_scenario = st.session_state.get("last_build_scenario", config.STATUS_QUO_TODAY)
+if config.SCENARIOS.get(base_scenario):
+    sc = config.SCENARIOS[base_scenario]
 else:
-    t_solar, t_on, t_off = sc["solar"], sc["wind_onshore"], sc["wind_offshore"]
+    sc = status_quo_today if base_scenario == config.STATUS_QUO_TODAY else status_quo
+if scenario == config.STATUS_QUO_TODAY:
+    sb.caption("Stand der installierten Leistung: "
+               + (f"{status_quo_today_date:%m/%Y}" if status_quo_today_date is not None else "Ersatzwerte"))
+with sb.expander("Manuelle Werte und Optionen", expanded=False):
+    if scenario == config.MANUAL:
+        t_solar = st.number_input("Ziel Solar (GWp)", 0.0, 600.0, float(sc["solar"]), 5.0)
+        t_on = st.number_input("Ziel Wind Onshore (GW)", 0.0, 250.0, float(sc["wind_onshore"]), 5.0)
+        t_off = st.number_input("Ziel Wind Offshore (GW)", 0.0, 100.0, float(sc["wind_offshore"]), 1.0)
+    else:
+        t_solar, t_on, t_off = sc["solar"], sc["wind_onshore"], sc["wind_offshore"]
+        st.caption("Für eigene Ausbauwerte das Szenario „Manuelle Werte“ wählen (vorbelegt mit dem "
+                   "zuletzt gewählten Szenario).")
+    disable_monthly_scaling = st.checkbox(
+        "Monatliche Skalierung aus", value=False,
+        help="Verwendet die Ist-Erzeugung ohne Skalierung (Ziel = Ist). Zur Kontrolle gegenüber Energy-Charts.")
+    disable_pumped_storage = st.checkbox(
+        "Pumpspeicher/-Ladung aus", value=True,
+        help="Schließt Pumpspeicher-Erzeugung und Pumpstrom aus. Eingeschaltet zählt der Saldo (≈ Speicherverluste).")
 
 if disable_monthly_scaling:
     sb.caption(f"Skalierung aus – Ist-Leistung am Zeitraumende: Solar {gn(status_quo['solar'])} GWp | "
@@ -369,35 +382,46 @@ else:
 # ---------------------------------------------------------------------------
 # Seitenleiste: Sektorenkopplung
 # ---------------------------------------------------------------------------
+sb = box_sector
 sb.subheader("Sektorenkopplung – Zusatzlasten (über aktuellen Bestand hinaus)")
-sector_scenario = sb.radio("Szenario Sektorenkopplung", list(config.SECTOR_SCENARIOS), index=0)
-ssc = config.SECTOR_SCENARIOS[sector_scenario]
-use_manual_sector = sb.checkbox("Manuelle Werte Sektorenkopplung verwenden", value=False)
-sb.caption("Werte sind Gesamtzahlen; die Differenz zum aktuellen Bestand wird als Zusatzlast modelliert.")
-# --- Elektromobilität (direkt darunter der Wochenendanteil)
-sb.markdown("**Elektromobilität**")
-if use_manual_sector:
-    mio_ev = sb.number_input(f"Elektro-PKW ({config.CURRENT_EV} … {config.MAX_EV}, gesamt) [Mio.]",
-                             config.CURRENT_EV, config.MAX_EV, int(ssc["ev"]), 1)
-    mio_lkw = sb.number_input(f"Elektro-LKW (0 … {config.MAX_LKW:.0f}, gesamt) [Mio.]", config.CURRENT_LKW,
-                              config.MAX_LKW, float(ssc["lkw"]), 0.1, format="%.1f")
-    weekend_share = sb.slider("Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)", 0, 50,
-                              config.DEFAULT_WEEKEND_SHARE,
-                              help="Dieser Anteil wird auf Wochenenden und Feiertage gelegt, "
-                                   "der Rest folgt dem saisonalen Profil über alle Tage.") / 100.0
-else:
-    mio_ev, mio_lkw = ssc["ev"], ssc["lkw"]
-    weekend_share = config.DEFAULT_WEEKEND_SHARE / 100.0
-
-# --- Wärme
-sb.markdown("**Wärme**")
-if use_manual_sector:
-    mio_dhw = sb.number_input(f"Elektrische Warmwasserbereitung ({config.CURRENT_DHW} … {config.MAX_HEAT_EW}, "
-                              f"gesamt) [Mio. Einwohner]", config.CURRENT_DHW, config.MAX_HEAT_EW, int(ssc["dhw"]), 1)
-    mio_heat = sb.number_input(f"Elektrische Heizung ({config.CURRENT_HEATING} … {config.MAX_HEAT_EW}, gesamt) "
-                               f"[Mio. Einwohner]", config.CURRENT_HEATING, config.MAX_HEAT_EW, int(ssc["heating"]), 1)
-else:
-    mio_dhw, mio_heat = ssc["dhw"], ssc["heating"]
+sector_scenario = sb.radio("Szenario Sektorenkopplung", [*config.SECTOR_SCENARIOS, config.MANUAL], index=0)
+manual_sector = sector_scenario == config.MANUAL
+if not manual_sector:
+    st.session_state["last_sector_scenario"] = sector_scenario
+# Manuelle Werte: Vorbelegung mit dem zuletzt gewählten Szenario
+ssc = config.SECTOR_SCENARIOS[st.session_state.get("last_sector_scenario", config.SECTOR_STATUS_QUO)]
+with sb.expander("Last-Skalierung und manuelle Werte", expanded=False):
+    load_scale = st.slider("Last-Skalierung (%)", 50, 200, 100, 5) / 100.0
+    if manual_sector:
+        st.caption("Werte sind Gesamtzahlen; die Differenz zum aktuellen Bestand wird als Zusatzlast modelliert.")
+        st.markdown("**Elektromobilität**")
+        mio_ev = st.number_input(f"Elektro-PKW ({config.CURRENT_EV} … {config.MAX_EV}, gesamt) [Mio.]",
+                                 config.CURRENT_EV, config.MAX_EV, int(ssc["ev"]), 1)
+        mio_lkw = st.number_input(f"Elektro-LKW (0 … {config.MAX_LKW:.0f}, gesamt) [Mio.]", config.CURRENT_LKW,
+                                  config.MAX_LKW, float(ssc["lkw"]), 0.1, format="%.1f")
+        weekend_share = st.slider("Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)", 0, 50,
+                                  config.DEFAULT_WEEKEND_SHARE,
+                                  help="Dieser Anteil wird auf Wochenenden und Feiertage gelegt, "
+                                       "der Rest folgt dem saisonalen Profil über alle Tage.") / 100.0
+        st.markdown("**Wärme**")
+        mio_dhw = st.number_input(f"Elektrische Warmwasserbereitung ({config.CURRENT_DHW} … {config.MAX_HEAT_EW}, "
+                                  f"gesamt) [Mio. Einwohner]", config.CURRENT_DHW, config.MAX_HEAT_EW,
+                                  int(ssc["dhw"]), 1)
+        mio_heat = st.number_input(f"Elektrische Heizung ({config.CURRENT_HEATING} … {config.MAX_HEAT_EW}, gesamt) "
+                                   f"[Mio. Einwohner]", config.CURRENT_HEATING, config.MAX_HEAT_EW,
+                                   int(ssc["heating"]), 1)
+        st.markdown("**Elektrolyse**")
+        electrolysis_gw = st.number_input(f"Elektrolyse (0 … {config.MAX_ELECTROLYSIS_GW}) [GW]", 0,
+                                          config.MAX_ELECTROLYSIS_GW, int(ssc["electrolysis"]), 1,
+                                          help="Elektrolyseure nutzen ausschließlich Erzeugungsüberschüsse "
+                                               "(Superpower), höchstens Leistung × 24 h je Tag.")
+    else:
+        mio_ev, mio_lkw = ssc["ev"], ssc["lkw"]
+        mio_dhw, mio_heat = ssc["dhw"], ssc["heating"]
+        electrolysis_gw = int(ssc["electrolysis"])
+        weekend_share = config.DEFAULT_WEEKEND_SHARE / 100.0
+        st.caption("Für eigene Werte (E-Mobilität, Wärme, Elektrolyse) das Szenario „Manuelle Werte“ wählen "
+                   "(vorbelegt mit dem zuletzt gewählten Szenario).")
 
 # --- Heizung – Anteile: Speicheranteil immer sichtbar, übrige Parameter eingeklappt
 sb.markdown("**Heizung – Anteile**")
@@ -445,15 +469,8 @@ if st_share > 0:
     if add_dhw + 1e-9 < n_s:
         sb.warning(f"Warmwasser-Eingabe zu klein: mindestens {gn(config.CURRENT_DHW + n_s)} Mio. EW nötig.")
 
-# --- Elektrolyse
+# --- Elektrolyse (nachrichtlich; Eingabe unter „Manuelle Werte“)
 sb.markdown("**Elektrolyse**")
-if use_manual_sector:
-    electrolysis_gw = sb.number_input(f"Elektrolyse (0 … {config.MAX_ELECTROLYSIS_GW}) [GW]", 0,
-                                      config.MAX_ELECTROLYSIS_GW, int(ssc["electrolysis"]), 1,
-                                      help="Elektrolyseure nutzen ausschließlich Erzeugungsüberschüsse (Superpower), "
-                                           "höchstens Leistung × 24 h je Tag.")
-else:
-    electrolysis_gw = int(ssc["electrolysis"])
 sb.caption(f"Max. Tagesbedarf Elektrolyse: {gn(electrolysis_gw, 0)} GW × 24 h = {gn(electrolysis_gw * 24, 0)} GWh")
 
 # --- nachrichtlich
@@ -466,6 +483,7 @@ add_lkw = max(0.0, round(float(mio_lkw) - config.CURRENT_LKW, 1))
 sb.caption(f"Zusatzverbrauch (über Stand von 2026): +{gn(add_ev)} Mio PKW, +{gn(add_lkw)} Mio LKW, "
            f"+{gn(add_dhw, 0)} Mio EW WW, +{gn(add_heat, 0)} Mio EW Heizung")
 
+sb = box_cost
 if st_share > 0:
     with sb.expander("Kostenparameter (Kostenvergleich)", expanded=False):
         cd = costs.CostParams()
@@ -492,6 +510,7 @@ if st_share > 0:
 else:
     cost_params = costs.CostParams()
 
+sb = box_co2
 sb.subheader("CO₂")
 co2_specific = sb.number_input("Spezifische CO₂-Intensität Residual (g/kWh)", 200, 1500,
                                config.CO2_DEFAULT_G_PER_KWH, 50)

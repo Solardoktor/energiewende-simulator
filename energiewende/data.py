@@ -200,6 +200,26 @@ def daily_installed(installed: pd.DataFrame, dates: pd.Series) -> tuple[pd.DataF
     return out, False
 
 
+def latest_installed(installed: pd.DataFrame) -> tuple[dict, pd.Timestamp | None]:
+    """Neueste verfügbare installierte Leistung (GW) je Technologie und ihr Stichtag (Monatsende).
+
+    Fehlt ein Wert im letzten Monat, wird der jüngste vorhandene Wert der Technologie verwendet.
+    """
+    cols = list(config.FALLBACK_INSTALLED_GW)
+    if installed is None or installed.empty:
+        return dict(config.FALLBACK_INSTALLED_GW), None
+    df = installed.sort_values("month_end")
+    out, dates = {}, []
+    for c in cols:
+        valid = df.dropna(subset=[c])
+        if valid.empty:
+            out[c] = config.FALLBACK_INSTALLED_GW[c]
+        else:
+            out[c] = round(float(valid[c].iloc[-1]), 1)
+            dates.append(valid["month_end"].iloc[-1])
+    return out, (min(dates) if dates else None)
+
+
 # ---------------------------------------------------------------------------
 # Laden mit Ablage und Aktualisierungsregeln
 # ---------------------------------------------------------------------------

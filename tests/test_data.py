@@ -159,3 +159,14 @@ def test_referenz_heizgradtage_vorberechnen(tmp_path, monkeypatch):
     assert ref == pytest.approx(10 * 365.25, rel=1e-3)
     monkeypatch.setattr(data, "fetch_json", lambda *a, **k: (_ for _ in ()).throw(AssertionError))
     assert data.load_hgt_reference("München", store)[0] == pytest.approx(ref, rel=1e-3)
+
+
+def test_latest_installed():
+    inst = pd.DataFrame({"solar": [100.0, 110.0, None], "wind_onshore": [60.0, 61.0, 62.0],
+                         "wind_offshore": [8.0, 9.0, 9.5],
+                         "month_end": pd.to_datetime(["2026-08-31", "2026-09-30", "2026-10-31"])})
+    vals, when = data.latest_installed(inst)
+    assert vals == {"solar": 110.0, "wind_onshore": 62.0, "wind_offshore": 9.5}
+    assert when == pd.Timestamp("2026-09-30")               # ältester der jeweils neuesten Werte
+    vals, when = data.latest_installed(pd.DataFrame())
+    assert when is None and vals["solar"] > 0

@@ -33,11 +33,11 @@ def test_app_laeuft_und_schalter_wirken():
     assert len(at.get("plotly_chart")) == 3
     first = at.dataframe[0].value.copy()
 
-    at.sidebar.checkbox[1].check().run()          # Monatliche Skalierung aus
+    next(c for c in at.sidebar.checkbox if c.label == "Monatliche Skalierung aus").check().run()
     assert not at.exception
     assert not at.dataframe[0].value.equals(first)
 
-    at.sidebar.checkbox[2].uncheck().run()        # Pumpspeicher ein
+    next(c for c in at.sidebar.checkbox if c.label == "Pumpspeicher/-Ladung aus").uncheck().run()
     assert not at.exception
 
     at.sidebar.radio[0].set_value("Kalenderjahr").run()
@@ -73,7 +73,7 @@ def test_heizung_eingabe_ohne_netzabruf(monkeypatch, tmp_path):
                         lambda l, s, e, t, store=None: data.LoadResult(synthetic_temps(s, e)))
     monkeypatch.setattr(data, "fetch_json", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Netz")))
     at = AppTest.from_file(APP, default_timeout=60).run()
-    next(c for c in at.sidebar.checkbox if "Sektorenkopplung" in c.label).check().run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Manuelle Werte").run()
     for label in ("Warmwasser", "Heizung"):
         ni = next(n for n in at.sidebar.number_input if label in n.label)
         ni.set_value(80).run()
@@ -152,7 +152,7 @@ def test_stufe2_elektrolyse_szenarien_und_grenzen():
     assert "Elektrolyse: 10 GW" in caps and "240 GWh" in caps
     assert any("Volllaststunden" in c.value for c in at.caption)
     assert "Elektrolyse 10 GW" in _dl_traces(at)[-1]
-    next(c for c in at.sidebar.checkbox if "Sektorenkopplung" in c.label).check().run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Manuelle Werte").run()
     ni = {n.label.split(" (")[0]: n for n in at.sidebar.number_input}
     assert ni["Elektro-PKW"].max == 50 and ni["Elektro-LKW"].max == 5.0
     assert ni["Elektrische Heizung"].max == 100 and ni["Elektrische Heizung"].label.endswith("[Mio. Einwohner]")
@@ -195,7 +195,7 @@ def test_stufe3_speicherbilanz():
     assert list(comp.columns) == ["Kennzahl", "Z0 Referenz (WP)", "Z1 direktelektrisch", "Z2 mit Speicher"]
     assert any(e.label.startswith("Vergleich der Rechenzustände") for e in at.expander)
     # WW-Prüfung: Warmwasser zu klein
-    next(c for c in at.sidebar.checkbox if "Sektorenkopplung" in c.label).check().run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Manuelle Werte").run()
     next(n for n in at.sidebar.number_input if n.label.startswith("Elektrische Warmwasserbereitung")).set_value(20).run()
     assert any("Warmwasser-Eingabe zu klein" in w.value for w in at.sidebar.warning)
     assert any("mindestens" in i.value for i in at.info)
@@ -317,7 +317,7 @@ def test_standardzeitraum_und_wochenende_eingeklappt():
     labels = lambda: [s.label for s in at.sidebar.slider]          # noqa: E731
     weekend = "Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)"
     assert weekend not in labels()
-    next(c for c in at.sidebar.checkbox if "Sektorenkopplung" in c.label).check().run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Manuelle Werte").run()
     assert weekend in labels()
     ni = [n.label for n in at.sidebar.number_input]
     i_lkw = next(i for i, l in enumerate(ni) if l.startswith("Elektro-LKW"))
@@ -354,3 +354,46 @@ def test_kostenvergleich_kasten():
     next(n for n in exp.number_input if n.label.startswith("Langzeitspeicher HTS")).set_value(5).run()
     after = next(d.value for d in at.dataframe if "Kostenposition" in d.value.columns)
     assert not after.equals(before)
+
+
+def test_status_quo_heute_ist_standard():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    radio = next(r for r in at.sidebar.radio if r.label == "Szenario")
+    assert radio.value == "Status Quo (Ist-Leistung heute)" and radio.options[0] == radio.value
+    assert "Status Quo (Ist-Leistung am Zeitraumende)" in radio.options
+    caps = " ".join(c.value for c in at.sidebar.caption)
+    inst = synthetic_installed().iloc[-1]                     # neuester Monat der Testdaten
+    assert f"Stand der installierten Leistung: {inst['month_end']:%m/%Y}" in caps
+    assert f"Solar: {inst['solar']:.1f}".replace(".", ",") in caps
+    radio.set_value("Status Quo (Ist-Leistung am Zeitraumende)").run()
+    caps2 = " ".join(c.value for c in at.sidebar.caption)
+    assert "Stand der installierten Leistung" not in caps2 and caps2 != caps
+
+
+def test_manuelle_werte_als_szenario_und_einklappbereiche():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    build = next(r for r in at.sidebar.radio if r.label == "Szenario")
+    sector = next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung")
+    assert build.options[-1] == "Manuelle Werte" and sector.options[-1] == "Manuelle Werte"
+    assert not any(c.label.startswith("Manuelle") for c in at.sidebar.checkbox)      # keine Haken mehr
+    exp_b = next(e for e in at.sidebar.expander if e.label == "Manuelle Werte und Optionen")
+    assert [c.label for c in exp_b.checkbox] == ["Monatliche Skalierung aus", "Pumpspeicher/-Ladung aus"]
+    exp_s = next(e for e in at.sidebar.expander if e.label == "Last-Skalierung und manuelle Werte")
+    assert [s.label for s in exp_s.slider] == ["Last-Skalierung (%)"]
+    # Ausbau: Agora wählen, dann manuell → Vorbelegung 400 GWp
+    build.set_value("Agora Energiewende: Klimaneutrales Deutschland 2045").run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario").set_value("Manuelle Werte").run()
+    exp_b = next(e for e in at.sidebar.expander if e.label == "Manuelle Werte und Optionen")
+    assert next(n for n in exp_b.number_input if n.label == "Ziel Solar (GWp)").value == 400
+    # Sektorenkopplung: manuelle Eingaben im Einklappbereich, nach der Last-Skalierung
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Manuelle Werte").run()
+    exp_s = next(e for e in at.sidebar.expander if e.label == "Last-Skalierung und manuelle Werte")
+    assert [s.label for s in exp_s.slider][0] == "Last-Skalierung (%)"
+    assert {n.label.split(" (")[0] for n in exp_s.number_input} == {
+        "Elektro-PKW", "Elektro-LKW", "Elektrische Warmwasserbereitung", "Elektrische Heizung", "Elektrolyse"}
+    # Reihenfolge der Abschnitte: Temperatur-Standort direkt vor CO₂
+    labels = [w.label for w in at.sidebar.get("selectbox")] + [n.label for n in at.sidebar.number_input]
+    assert "Standort Temperaturdaten" in labels
+    md = [m.value for m in at.sidebar.markdown]
+    assert any("Temperatur (Heizung, Mobilität)" in m for m in md)
+    assert not at.exception
