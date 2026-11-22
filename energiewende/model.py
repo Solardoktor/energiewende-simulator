@@ -43,6 +43,7 @@ class Params:
     storage_days: int = 30              # max. Speicherdauer
     design_temp: float = -7.0           # Auslegungstemperatur °C
     storage_cyclic: bool = True         # Speicher als stationäres Jahr (wie Dunkelflauten)
+    storage_first: bool = False         # Priorität: Speicherbeladung vor Elektrolyse (Standard: Elektrolyse zuerst)
 
     @property
     def share_direct(self) -> float:
@@ -177,7 +178,7 @@ def compute_daily(raw: pd.DataFrame, installed_daily: pd.DataFrame, temps: pd.Da
 
 
 def _apply_balance(df: pd.DataFrame, p: Params) -> None:
-    """Elektrolyse (nur Überschuss, Vorrang vor Speicher) und Tagesbilanz aus den Lastspalten."""
+    """Elektrolyse (nur Überschuss) und Tagesbilanz aus den Lastspalten (ohne Speicher)."""
     load_before = df[list(BASE_LOAD_COLS)].sum(axis=1)
     df["electrolysis_gwh"] = np.minimum(max(0.0, p.electrolysis_gw) * 24.0,
                                         np.maximum(0.0, df["ee_day"] - load_before))

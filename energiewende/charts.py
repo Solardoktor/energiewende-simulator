@@ -96,7 +96,8 @@ def _hatched_color(color: str) -> dict:
                                           fillmode="replace", size=5, solidity=0.5))
 
 
-def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle: str) -> go.Figure:
+def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle: str,
+                 storage_first: bool = False) -> go.Figure:
     x = df["date"]
     base, mob, dhw, heat = (df[c] for c in ("base_load_gwh", "mobility_gwh", "dhw_gwh", "heating_gwh"))
     other, off, on, sol = (df[c] for c in ("other_ee", "wind_offshore_scaled", "wind_onshore_scaled", "solar_scaled"))
@@ -113,21 +114,30 @@ def build_figure(df: pd.DataFrame, start: date, end: date, title: str, subtitle:
                        "Netzlast: %{customdata[2]:.1f} GWh / %{customdata[3]:.1f} GW<extra></extra>"),
     ))
 
-    # Langzeit-Wärmespeicher ganz oben: Speicher IN (Netzbezug), darüber Speicher OUT (kein Netzbezug)
-    if "storage_in_gwh" in df:
-        elyse0 = df["electrolysis_gwh"]
-        top = base + mob + dhw + heat + elyse0
-        s_in, o_ww, o_h = df["storage_in_gwh"], df["storage_out_dhw_gwh"], df["storage_out_heat_gwh"]
-        _seg(fig, x, o_h, top + s_in + o_ww, "Speicher OUT (Heiz)", "Speicher OUT (Heiz)",
-             marker=_hatched_color(COLORS["heating"]))
-        _seg(fig, x, o_ww, top + s_in, "Speicher OUT (WW)", "Speicher OUT (WW)",
-             marker=_hatched_color(COLORS["dhw"]))
-        _seg(fig, x, s_in, top, "Speicher IN", "Speicher IN", 0.85, COLORS["storage_in"])
-
-    # Last als echte Segmente
+    # Reihenfolge über Heizung nach Priorität: zuerst bediente Überschussnutzung liegt unten.
+    #   Elektrolyse zuerst:  … Heizung | Elektrolyse | Speicher IN | Speicher OUT
+    #   Speicher zuerst:     … Heizung | Speicher IN | Elektrolyse | Speicher OUT
+    below = base + mob + dhw + heat
     elyse = df["electrolysis_gwh"] if "electrolysis_gwh" in df else base * 0
-    if elyse.sum() > 0:
-        _seg(fig, x, elyse, base + mob + dhw + heat, "Elektrolyse", "Elektrolyse", 0.85, COLORS["electrolysis"])
+    has_storage = "storage_in_gwh" in df
+    s_in = df["storage_in_gwh"] if has_storage else base * 0
+    elyse_base, s_in_base = (below + s_in, below) if storage_first else (below, below + elyse)
+    top = below + elyse + s_in
+    if has_storage:
+        o_ww, o_h = df["storage_out_dhw_gwh"], df["storage_out_heat_gwh"]
+        _seg(fig, x, o_h, top + o_ww, "Speicher OUT (Heiz)", "Speicher OUT (Heiz)",
+             marker=_hatched_color(COLORS["heating"]))
+        _seg(fig, x, o_ww, top, "Speicher OUT (WW)", "Speicher OUT (WW)",
+             marker=_hatched_color(COLORS["dhw"]))
+
+    # Last als echte Segmente; Legende von oben nach unten wie im Stapel
+    elyse_seg = (elyse, elyse_base, "Elektrolyse", COLORS["electrolysis"]) if elyse.sum() > 0 else None
+    store_seg = (s_in, s_in_base, "Speicher IN", COLORS["storage_in"]) if has_storage else None
+    upper, lower = (elyse_seg, store_seg) if storage_first else (store_seg, elyse_seg)
+    for seg in (upper, lower):
+        if seg is not None:
+            y, b, name, color = seg
+            _seg(fig, x, y, b, name, name, 0.85, color)
     _seg(fig, x, heat, base + mob + dhw, "Heizung", "Heizung", 0.85, COLORS["heating"])
     _seg(fig, x, dhw, base + mob, "Warmwasser", "Warmwasser", 0.85, COLORS["dhw"])
     _seg(fig, x, mob, base, "Mobilität", "Mobilität", 0.85, COLORS["mobility"])

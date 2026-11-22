@@ -125,6 +125,8 @@ MAX_ELECTROLYSIS_GW = 20
 STORAGE_DHW_FACTOR = 1.5          # Warmwasser direktelektrisch: +50 % gegenüber bisheriger Annahme
 MAX_STORAGE_DAYS = 183            # Obergrenze max. Speicherdauer und Prüfgrenze Dunkelflaute
 STORAGE_CHARGE_DESIGN_TEMP = -20.0  # Ladegrenze = Heizlast bei −20 °C (+ Warmwasser)
+PRIORITY_ELYSE_FIRST = "Priorität Elektrolyse vor Langzeit-Wärmespeicher-Beladung"
+PRIORITY_STORAGE_FIRST = "Priorität Langzeit-Wärmespeicher-Beladung vor Elektrolyse"
 DEFAULT_WEEKEND_SHARE = 20       # % der E-Mobilitäts-Ladeenergie gezielt am Wochenende/Feiertag
 STORAGE_DEFAULTS = {"share": 0, "loss_pct": 0.0, "days": 30, "design_temp": -7}
 

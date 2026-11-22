@@ -156,3 +156,41 @@ def test_zyklisch_bilanz_geschlossen(loss):
     # Mehrverbrauch vollständig sichtbar: Z2 − Z0 = Mehrbedarf + Elektrolyse-Änderung + Verluste
     assert k["total_z2"] - k["total_z0"] == pytest.approx(
         k["extra_heat"] + k["extra_dhw"] + k["elyse_change"] + k["loss"], abs=1e-6)
+
+
+# --- Priorität Speicherbeladung vor Elektrolyse --------------------------------
+@pytest.mark.parametrize("cyclic", [True, False])
+def test_prioritaet_speicher_vor_elektrolyse(cyclic):
+    base = replace(BASE, electrolysis_gw=20, storage_cyclic=cyclic, storage_days=60)
+    pe, ps = replace(base, storage_first=False), replace(base, storage_first=True)
+    re_, rs = compute_storage(_z0(pe), pe), compute_storage(_z0(ps), ps)
+    assert re_.active and rs.active
+    z1, z2 = rs.z1, rs.z2
+    s_in, cap = z2["storage_in_gwh"], 20 * 24
+    before = z1["superpower_day"] + z1["electrolysis_gwh"]           # Überschuss vor Elektrolyse
+    assert (s_in <= before + 1e-9).all()
+    # Elektrolyse bekommt nur den Rest nach der Speicherbeladung, höchstens 24 h × Leistung
+    assert z2["electrolysis_gwh"].to_numpy() == pytest.approx(np.clip(np.minimum(cap, before - s_in), 0, None).to_numpy())
+    assert z2["superpower_day"].to_numpy() == pytest.approx(np.clip(before - s_in - z2["electrolysis_gwh"], 0, None).to_numpy())
+    # Residuallast sinkt genau um die Speicherentladung (wie bisher)
+    out = z2["storage_out_dhw_gwh"] + z2["storage_out_heat_gwh"]
+    assert z2["residual_day"].to_numpy() == pytest.approx((z1["residual_day"] - out).to_numpy())
+    # Vergleich der Prioritäten: mehr Speicherladung, weniger Elektrolyse
+    assert rs.kpi["in"] >= re_.kpi["in"] - 1e-6
+    assert z2["electrolysis_gwh"].sum() <= re_.z2["electrolysis_gwh"].sum() + 1e-6
+    assert rs.kpi["uncovered"] <= re_.kpi["uncovered"] + 1e-6
+    # Bilanzen geschlossen, Kapazität eingehalten
+    k = rs.kpi
+    soc0 = k["soc_start"] if cyclic else k["prev_year"]
+    assert soc0 + k["in"] - k["loss"] - out.sum() - k["soc_end"] == pytest.approx(0, abs=1e-6)
+    assert z2["storage_soc_gwh"].max() <= k["capacity"] + 1e-6
+    if cyclic:
+        assert k["total_z2"] - k["total_z0"] == pytest.approx(
+            k["extra_heat"] + k["extra_dhw"] + k["elyse_change"] + k["loss"], abs=1e-6)
+
+
+def test_prioritaet_ohne_elektrolyse_gleich():
+    p0 = replace(BASE, electrolysis_gw=0)
+    a = compute_storage(_z0(p0), replace(p0, storage_first=False))
+    b = compute_storage(_z0(p0), replace(p0, storage_first=True))
+    assert a.z2["total_load_gwh"].to_numpy() == pytest.approx(b.z2["total_load_gwh"].to_numpy())

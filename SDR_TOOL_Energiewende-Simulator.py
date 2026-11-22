@@ -191,7 +191,8 @@ def describe_run(p: model.Params, start: date, end: date, location: str,
         extras.append(f"Elektrolyse {gn(p.electrolysis_gw, 0)} GW")
     if p.storage_share > 0:
         extras.append(f"LZ-Wärmespeicher {p.storage_share * 100:.0f} %, Bemessung {p.storage_days} Tage, "
-                      f"Verlust {gn(p.storage_loss * 100)} %/Tag" + ("" if p.storage_cyclic else ", linear"))
+                      f"Verlust {gn(p.storage_loss * 100)} %/Tag" + ("" if p.storage_cyclic else ", linear")
+                      + (", Speicher vor Elektrolyse" if p.storage_first and p.electrolysis_gw > 0 else ""))
     return (f"{start:%d.%m.%Y}–{end:%d.%m.%Y} | {gen}<br>"
             f"PKW {gn(ev, 0)} | LKW {gn(lkw)} | WW {gn(dhw, 0)} | Heiz. {gn(heat, 0)} Mio | "
             f"WP Luft/Sole {p.share_air_hp * 100:.0f}/{p.share_water_hp * 100:.0f} % | "
@@ -219,7 +220,8 @@ def render_storage_balance(r: storage.StorageResult, s0: dict) -> None:
          f"{t(k['out_dhw'])} + {t(k['out_heat'])} TWh (Σ {t(k['out_dhw'] + k['out_heat'])} TWh)",
          "ausgespeicherte Wärme (COP = 1)"),
         ("Ladeenergie für Langzeit-Wärmespeicher aus Superpower", f"{t(k['in'])} TWh",
-         "eingespeicherter Stromüberschuss, Elektrolyse hat Vorrang"),
+         "eingespeicherter Stromüberschuss; " + ("Speicherbeladung hat Vorrang vor Elektrolyse"
+                                                if k["storage_first"] else "Elektrolyse hat Vorrang")),
         ("Mehrbedarf direktelektrische Speicherheizung für Warmwasser + Heizung",
          f"{t(k['extra_dhw'])} + {t(k['extra_heat'])} TWh (Σ {t(extra)} TWh; "
          f"+{pct(k['extra_dhw'], k['dhw_z0'])} bzw. +{pct(k['extra_heat'], k['heat_z0'])})",
@@ -426,6 +428,9 @@ with sb.expander("Last-Skalierung und manuelle Werte", expanded=False):
 # --- Heizung – Anteile: Speicheranteil immer sichtbar, übrige Parameter eingeklappt
 sb.markdown("**Heizung – Anteile**")
 sd = config.STORAGE_DEFAULTS
+priority = sb.radio("Priorität bei Überschuss", [config.PRIORITY_ELYSE_FIRST, config.PRIORITY_STORAGE_FIRST], index=0,
+                    help="Reihenfolge, in der Erzeugungsüberschüsse genutzt werden.")
+storage_first = priority == config.PRIORITY_STORAGE_FIRST
 st_share = sb.slider("Anteil Langzeit-Wärmespeicher (%)", 0, 100, sd["share"], 5,
                      help="Bezogen auf die zusätzlichen Heizungs-Einwohner (über dem Bestand). Diese Haushalte "
                           "heizen und bereiten Warmwasser direktelektrisch über einen Langzeit-Wärmespeicher.")
@@ -532,7 +537,7 @@ params = model.Params(
     co2_specific=float(co2_specific), hgt_reference=hgt_ref,
     electrolysis_gw=float(electrolysis_gw),
     storage_share=st_share / 100.0, storage_loss=st_loss / 100.0, storage_days=int(st_days),
-    design_temp=float(st_tdesign), storage_cyclic=bool(st_cyclic),
+    design_temp=float(st_tdesign), storage_cyclic=bool(st_cyclic), storage_first=storage_first,
 )
 holiday_dates = frozenset(holidays.Germany(years=range(start_date.year, end_date.year + 1)).keys())
 try:
@@ -559,12 +564,18 @@ if params.scaling_enabled:
 else:
     gen_txt = (f"Gesamt-Nettostromerzeugung mit Ist-Leistung, unskaliert (am Zeitraumende "
                f"{status_quo['solar']:.0f} GWp Solar, {status_quo['wind_onshore'] + status_quo['wind_offshore']:.0f} GW Wind)")
-subtitle = (f"{gen_txt}<br>Gesamt-Last aus Basis-Last, e-PKW ({gn(mio_ev, 0)} Mio.), e-LKW ({gn(mio_lkw)} Mio.), "
-            f"e-Warmwasser ({gn(mio_dhw, 0)} Mio. EW), e-Heizung ({gn(mio_heat, 0)} Mio. EW)"
-            + (f", Elektrolyse ({gn(electrolysis_gw, 0)} GW)" if electrolysis_gw > 0 else "")
-            + (f", Langzeit-Wärmespeicher ({st_share} %, {gn(ST.kpi['n_s'])} Mio. EW)" if storage_on else ""))
+load_parts = [f"e-PKW ({gn(mio_ev, 0)} Mio.)", f"e-LKW ({gn(mio_lkw)} Mio.)",
+              f"e-Warmwasser ({gn(mio_dhw, 0)} Mio. EW)", f"e-Heizung ({gn(mio_heat, 0)} Mio. EW)"]
+surplus_parts = []                                     # Reihenfolge nach Priorität bei Überschuss
+if electrolysis_gw > 0:
+    surplus_parts.append(f"Elektrolyse ({gn(electrolysis_gw, 0)} GW)")
+if storage_on:
+    surplus_parts.insert(0 if storage_first else len(surplus_parts),
+                         f"Langzeit-Wärmespeicher ({st_share} %, {gn(ST.kpi['n_s'])} Mio. EW)")
+subtitle = f"{gen_txt}<br>Gesamt-Last aus Basis-Last, " + ", ".join(load_parts + surplus_parts)
 fig = charts.build_figure(df, start_date, end_date,
-                          f"Tagesbilanz von Stromerzeugung und Verbrauch in Deutschland  {period_str}", subtitle)
+                          f"Tagesbilanz von Stromerzeugung und Verbrauch in Deutschland  {period_str}", subtitle,
+                          storage_first=storage_first and storage_on)
 st.plotly_chart(fig, width="stretch")
 if storage_on:
     st.caption("Speicher OUT (heller, ganz oben): Wärmebedarf, der aus dem Langzeit-Wärmespeicher gedeckt wird "

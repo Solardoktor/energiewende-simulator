@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
-from .model import Params, _apply_balance, _finish_balance, find_runs, german_number as gn, periods, summarize
+from .model import BASE_LOAD_COLS, Params, _apply_balance, _finish_balance, find_runs, german_number as gn, periods, summarize
 
 EPS = 1e-9
 
@@ -222,13 +222,17 @@ def compute_storage(df0: pd.DataFrame, p: Params) -> StorageResult:
         notes.append("Ohne Temperaturdaten keine Lade-/Entladegrenzen.")
 
     capacity = float(np.max(cap_out)) * p.storage_days if temps_ok else float("inf")   # GWh
-    disp = dispatch(z1["residual_day"], z1["superpower_day"], ww_s, h_s, cap_out, cap_in,
+    # Für die Speicherbeladung verfügbarer Überschuss je nach Priorität:
+    #  Elektrolyse zuerst → Überschuss nach Elektrolyse; Speicher zuerst → Überschuss vor Elektrolyse
+    surplus_for_storage = (z1["superpower_day"] + z1["electrolysis_gwh"]) if p.storage_first \
+        else z1["superpower_day"]
+    disp = dispatch(z1["residual_day"], surplus_for_storage, ww_s, h_s, cap_out, cap_in,
                     p.storage_loss, capacity, cyclic=p.storage_cyclic)
 
     # --- Z2: mit Speicher
     z2 = z1.copy()
     out = disp.out_dhw + disp.out_heat
-    z2["storage_surplus_avail"] = z1["superpower_day"].to_numpy()
+    z2["storage_surplus_avail"] = np.asarray(surplus_for_storage, float)
     z2["storage_residual_z1"] = z1["residual_day"].to_numpy()
     z2["storage_in_gwh"] = disp.storage_in
     z2["storage_out_dhw_gwh"] = disp.out_dhw
@@ -239,7 +243,13 @@ def compute_storage(df0: pd.DataFrame, p: Params) -> StorageResult:
     z2["storage_cap_out_gwh"] = cap_out
     z2["dhw_gwh"] = z1["dhw_gwh"] - disp.out_dhw
     z2["heating_gwh"] = z1["heating_gwh"] - disp.out_heat
-    z2["total_load_gwh"] = z1["total_load_gwh"] - out + disp.storage_in
+    load_base = z2[list(BASE_LOAD_COLS)].sum(axis=1)
+    if p.storage_first:
+        # Elektrolyse erhält nur den Überschuss, der nach der Speicherbeladung übrig bleibt
+        z2["electrolysis_gwh"] = np.minimum(max(0.0, p.electrolysis_gw) * 24.0,
+                                            np.maximum(0.0, z2["ee_day"] - load_base - disp.storage_in))
+    # (Elektrolyse zuerst: unverändert aus Z1; Speicher IN ≤ Überschuss nach Elektrolyse)
+    z2["total_load_gwh"] = load_base + z2["electrolysis_gwh"] + disp.storage_in
     _finish_balance(z2)
 
     s0, s1, s2 = summarize(df0, p), summarize(z1, p), summarize(z2, p)
@@ -252,7 +262,8 @@ def compute_storage(df0: pd.DataFrame, p: Params) -> StorageResult:
         "loss": disp.loss.sum(),
         "extra_heat": z1["extra_heat_gwh"].sum(), "extra_dhw": z1["extra_dhw_gwh"].sum(),
         "heat_z0": s0["sums_gwh"]["heating_gwh"], "dhw_z0": s0["sums_gwh"]["dhw_gwh"],
-        "elyse_change": s1["sums_gwh"]["electrolysis_gwh"] - s0["sums_gwh"]["electrolysis_gwh"],
+        "elyse_change": s2["sums_gwh"]["electrolysis_gwh"] - s0["sums_gwh"]["electrolysis_gwh"],
+        "storage_first": bool(p.storage_first),
         "total_z0": s0["sums_gwh"]["total_load_gwh"], "total_z2": s2["sums_gwh"]["total_load_gwh"],
         "uncovered": disp.uncovered.sum(),
         "prev_year": disp.prev_year, "potential_end": disp.potential_end,

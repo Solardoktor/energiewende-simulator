@@ -68,7 +68,8 @@ def assumptions_markdown() -> str:
 **Elektrolyse**
 - Elektrolyseure nutzen ausschließlich Erzeugungsüberschüsse: je Tag min(Leistung × 24 h, EE − Last), wobei
   die Last Basis-Last, Mobilität, Warmwasser und Heizung umfasst (Intra-Day-Ausgleich wie im übrigen Modell)
-- Elektrolyse zählt zum Verbrauch (CO₂ 0 g/kWh); die verbleibende Superpower sinkt entsprechend, Dunkelflauten
+- Elektrolyse zählt zum Verbrauch (CO₂ 0 g/kWh); Priorität gegenüber dem Langzeit-Wärmespeicher umschaltbar;
+  die verbleibende Superpower sinkt entsprechend, Dunkelflauten
   ändern sich nicht. Unter der Jahresbilanz werden Energie und Volllaststunden (Energie ÷ Leistung) ausgewiesen
 - Mit „Manuelle Werte Sektorenkopplung verwenden“ lassen sich die Werte ausgehend vom gewählten Szenario anpassen
 
@@ -95,7 +96,11 @@ def assumptions_markdown() -> str:
   Beheizung ersetzt werden und der Speicher Wärmeverluste hat. Ausgewiesen als „Mehrbedarf direktelektrische
   Wärmespeicherung“ und in der Speicherbilanz.
 - Rechenzustände: Z0 ohne Speicher (Referenz, Werte in Klammern), Z1 Speicher-Haushalte direktelektrisch ohne
-  Verschiebung, Z2 mit Speicher (Hauptergebnis). Elektrolyse hat Vorrang vor dem Einspeichern.
+  Verschiebung, Z2 mit Speicher (Hauptergebnis).
+- Priorität bei Überschuss (umschaltbar): Standard „Elektrolyse vor Langzeit-Wärmespeicher-Beladung“ – der Speicher
+  lädt nur den Überschuss nach der Elektrolyse. Alternativ „Langzeit-Wärmespeicher-Beladung vor Elektrolyse“ – der
+  Speicher lädt aus dem Überschuss vor der Elektrolyse, die Elektrolyse erhält den Rest (höchstens Leistung × 24 h).
+  Die Stapelreihenfolge von Elektrolyse und Speicher IN in der Tagesenergie-Grafik folgt der Priorität.
 - Verfahren: Rückwärts vom Zeitraumende wird für jeden Tag mit Residuallast der speicherfähige Bedarf ausgespeichert
   (höchstens bis zur Residuallast) und im nächstgelegenen früheren Überschuss eingespeichert; je Tag im Speicher
   wird der Verlust (in % des Inhalts) berücksichtigt. Wie lange Energie im Speicher bleibt, ist nicht begrenzt.

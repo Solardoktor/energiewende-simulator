@@ -397,3 +397,35 @@ def test_manuelle_werte_als_szenario_und_einklappbereiche():
     md = [m.value for m in at.sidebar.markdown]
     assert any("Temperatur (Heizung, Mobilität)" in m for m in md)
     assert not at.exception
+
+
+def test_prioritaet_umschaltung_grafik_und_untertitel():
+    import json
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario").set_value(
+        "Agora Energiewende: Klimaneutrales Deutschland 2045").run()
+    next(r for r in at.sidebar.radio if r.label == "Szenario Sektorenkopplung").set_value("Szenario 2045").run()
+    next(s for s in at.sidebar.slider if s.label.startswith("Anteil Langzeit")).set_value(50).run()
+    prio = next(r for r in at.sidebar.radio if r.label == "Priorität bei Überschuss")
+    assert prio.value == "Priorität Elektrolyse vor Langzeit-Wärmespeicher-Beladung"
+
+    def stack():
+        lay = json.loads(at.get("plotly_chart")[0].proto.spec)
+        segs = {t["name"]: t for t in lay["data"] if t.get("name") in ("Elektrolyse", "Speicher IN", "Heizung")}
+        return lay["layout"]["title"]["text"], [t["name"] for t in lay["data"] if t.get("name") in segs], segs
+
+    title, order, _ = stack()
+    assert title.index("Elektrolyse (10 GW)") < title.index("Langzeit-Wärmespeicher")
+    assert order[:2] == ["Speicher IN", "Elektrolyse"]               # Legende oben → unten
+    ref_in = next(d.value for d in at.dataframe if "Kennzahl" in d.value.columns and
+                  "Speicherverluste" in d.value["Kennzahl"].tolist())
+    prio.set_value("Priorität Langzeit-Wärmespeicher-Beladung vor Elektrolyse").run()
+    assert not at.exception, at.exception
+    title, order, segs = stack()
+    assert title.index("Langzeit-Wärmespeicher") < title.index("Elektrolyse (10 GW)")
+    assert order[:2] == ["Elektrolyse", "Speicher IN"]
+    kpi = next(d.value for d in at.dataframe if "Kennzahl" in d.value.columns and
+               "Speicherverluste" in d.value["Kennzahl"].tolist())
+    assert "Speicherbeladung hat Vorrang" in kpi.set_index("Kennzahl").loc[
+        "Ladeenergie für Langzeit-Wärmespeicher aus Superpower", "Erläuterung"]
+    assert not kpi.equals(ref_in)
