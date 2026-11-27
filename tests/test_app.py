@@ -311,9 +311,14 @@ def test_grafiken_ausgerichtet_und_seitenleiste_geordnet():
 
 def test_standardzeitraum_und_wochenende_eingeklappt():
     at = AppTest.from_file(APP, default_timeout=60).run()
-    assert at.sidebar.radio[0].value == "Kalenderjahr"
+    assert at.sidebar.radio[0].value == "Winter (1.7. – 30.6.)"
+    assert at.sidebar.radio[0].options == ["Letzte 365 Tage", "Kalenderjahr", "Winter (1.7. – 30.6.)"]
+    assert at.sidebar.selectbox[0].value == "2022/23"
+    assert any("01.07.2022 – 30.06.2023" in c.value for c in at.sidebar.caption)
+    at.sidebar.radio[0].set_value("Kalenderjahr").run()
     assert at.sidebar.selectbox[0].value == 2022
     assert any("01.01.2022 – 31.12.2022" in c.value for c in at.sidebar.caption)
+    at.sidebar.radio[0].set_value("Winter (1.7. – 30.6.)").run()
     labels = lambda: [s.label for s in at.sidebar.slider]          # noqa: E731
     weekend = "Anteil Ladeenergie gezielt am Wochenende/Feiertag (0 … 50 %)"
     assert weekend not in labels()
@@ -429,3 +434,17 @@ def test_prioritaet_umschaltung_grafik_und_untertitel():
     assert "Speicherbeladung hat Vorrang" in kpi.set_index("Kennzahl").loc[
         "Ladeenergie für Langzeit-Wärmespeicher aus Superpower", "Erläuterung"]
     assert not kpi.equals(ref_in)
+
+
+
+def test_winter_auswahl():
+    from datetime import date, timedelta
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    opts = at.sidebar.selectbox[0].options
+    last_complete = date.today().replace(day=1) - timedelta(days=1)
+    newest = last_complete.year - 1 if last_complete >= date(last_complete.year, 6, 30) else last_complete.year - 2
+    assert opts[0] == f"{newest}/{(newest + 1) % 100:02d}"      # nur abgeschlossene Winterjahre
+    assert opts[-1] == "2015/16" and "2022/23" in opts
+    at.sidebar.selectbox[0].set_value("2023/24").run()
+    assert not at.exception, at.exception
+    assert any("01.07.2023 – 30.06.2024" in c.value for c in at.sidebar.caption)

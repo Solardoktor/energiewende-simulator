@@ -14,7 +14,12 @@ OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 HTTP_USER_AGENT = "SDR-Energiewende-Simulator (+https://www.solardoktor.de)"
 TIMEZONE = "Europe/Berlin"
 FIRST_YEAR = 2015
-DEFAULT_YEAR = 2022            # Standardzeitraum: Kalenderjahr 2022
+DEFAULT_YEAR = 2022            # Vorauswahl bei „Kalenderjahr“
+DEFAULT_WINTER = 2022          # Vorauswahl bei „Winter“: 2022/23 (Startjahr)
+PERIOD_LAST_365 = "Letzte 365 Tage"
+PERIOD_CALENDAR = "Kalenderjahr"
+PERIOD_WINTER = "Winter (1.7. – 30.6.)"
+DEFAULT_PERIOD_MODE = PERIOD_WINTER   # Standardzeitraum: Winter 2022/23
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 BUNDLED_DATA_DIR = ROOT_DIR / "data"      # im Repo versioniert (per GitHub Action aktualisiert)

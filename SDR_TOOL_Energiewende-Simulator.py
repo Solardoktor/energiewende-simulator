@@ -88,6 +88,13 @@ def fmt_period(p: model.Period | None) -> str:
     return f"{p.days} Tage ({p.start:%d.%m.%Y} bis {p.end:%d.%m.%Y}{wrap})"
 
 
+def winter_options(today: date) -> list[int]:
+    """Startjahre der abgeschlossenen Winterjahre (1.7. – 30.6.), neuestes zuerst."""
+    last_complete = last_day_of_previous_month(today)
+    newest = last_complete.year - 1 if last_complete >= date(last_complete.year, 6, 30) else last_complete.year - 2
+    return list(range(newest, config.FIRST_YEAR - 1, -1))
+
+
 def result_line(label: str, value: str, note: str | None = None, target=st) -> None:
     """Ergebniszeile wie st.metric, aber mit kleinerer Schrift für lange Werte.
 
@@ -295,12 +302,20 @@ st.sidebar.header("Einstellungen")
 # Feste Abschnitte (Reihenfolge in der Seitenleiste); befüllt werden sie in Programmreihenfolge.
 box_period, box_build, box_sector, box_cost, box_temp, box_co2 = (st.sidebar.container() for _ in range(6))
 sb = box_period
-period_mode = sb.radio("Zeitraum", ["Letzte 365 Tage", "Kalenderjahr"], index=1)
-if period_mode == "Kalenderjahr":
+period_modes = [config.PERIOD_LAST_365, config.PERIOD_CALENDAR, config.PERIOD_WINTER]
+period_mode = sb.radio("Zeitraum", period_modes, index=period_modes.index(config.DEFAULT_PERIOD_MODE))
+if period_mode == config.PERIOD_CALENDAR:
     years = list(range(today.year - 1, config.FIRST_YEAR - 1, -1))   # nur abgeschlossene Jahre
     year = sb.selectbox("Jahr", years,
                         index=years.index(config.DEFAULT_YEAR) if config.DEFAULT_YEAR in years else 0)
     start_date, end_date = date(year, 1, 1), date(year, 12, 31)
+elif period_mode == config.PERIOD_WINTER:
+    winters = winter_options(today)                    # nur abgeschlossene Winterjahre (bis 30.6.)
+    labels = [f"{y}/{(y + 1) % 100:02d}" for y in winters]
+    default_label = f"{config.DEFAULT_WINTER}/{(config.DEFAULT_WINTER + 1) % 100:02d}"
+    label = sb.selectbox("Winter", labels, index=labels.index(default_label) if default_label in labels else 0)
+    year = winters[labels.index(label)]
+    start_date, end_date = date(year, 7, 1), date(year + 1, 6, 30)
 else:
     end_date = last_day_of_previous_month(today)       # bis Ende Vormonat (vollständige Daten)
     start_date = end_date - timedelta(days=364)
